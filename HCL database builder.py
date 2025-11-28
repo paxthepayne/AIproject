@@ -6,12 +6,24 @@ import requests
 import pandas as pd
 from datetime import timedelta
 from collections import Counter
+import pandas as pd
+import sqlite3
 
 # OpenData BCN - Cultural Interest Points
 POIs = pd.DataFrame(requests.get("https://opendata-ajuntament.barcelona.cat/data/api/action/datastore_search?resource_id=31431b23-d5b9-42b8-bcd0-a84da9d8c7fa&limit=32000").json()["result"]["records"])
 
 # OpenData BCN - Events Agenda
 agenda = pd.DataFrame(requests.get("https://opendata-ajuntament.barcelona.cat/data/api/action/datastore_search?resource_id=877ccf66-9106-4ae2-be51-95a9f6469e4c&limit=32000").json()["result"]["records"])
+
+# OpenData BCN - Crowd levels Geopackages
+r = requests.get("https://opendata-ajuntament.barcelona.cat/data/dataset/fb8d92bd-13ca-42c8-b364-1e05b03d8c08/resource/6f6f5330-e9ef-42d3-82f5-d6739d3469a0/download/2016_turisme_oci.gpkg", stream=True)
+r.raise_for_status()
+with open("2016_turisme_oci.gpkg", "wb") as f:
+    for chunk in r.iter_content(chunk_size=8192):
+        f.write(chunk)
+conn = sqlite3.connect("2016_turisme_oci.gpkg")
+layer = pd.read_sql("SELECT * FROM '2016_turisme_oci';", conn)
+print(layer.head())
 
 # --------------------------------------------------------
 
@@ -50,7 +62,7 @@ for i, place in HCL.iterrows():
     date_counts = dict(Counter(all_dates)) # count how many events occur on each date
     HCL.at[i, 'events'] = date_counts
 
-# Adding timestamped weathers
+# Adding timestamped weather conditions
 
 # Adding timestamped crowd levels
 
