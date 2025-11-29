@@ -66,15 +66,15 @@ for name, (path, prop) in datasets.items():
     geo_layers.append((gdf, prop + "_norm"))
 
 # --------------------------------------------------------
-# Build HCL DataFrame
-HCL = gdf_pois[['name', 'longitude', 'latitude', 'geometry']].copy()
+# Build CL DataFrame
+CL = gdf_pois[['name', 'longitude', 'latitude', 'geometry']].copy()
 
 # Compute events count
-HCL['events_index'] = HCL.apply(lambda row: get_total_events(row['latitude'], row['longitude']), axis=1)
+CL['events_index'] = CL.apply(lambda row: get_total_events(row['latitude'], row['longitude']), axis=1)
 # Normalize events to 0-100
-min_val = HCL['events_index'].min()
-max_val = HCL['events_index'].max()
-if max_val > min_val: HCL['events_index'] = ((HCL['events_index'] - min_val) / (max_val - min_val)) * 100
+min_val = CL['events_index'].min()
+max_val = CL['events_index'].max()
+if max_val > min_val: CL['events_index'] = ((CL['events_index'] - min_val) / (max_val - min_val)) * 100
 
 # Compute combined normalized crowd levels
 def get_max_for_point(point, gdf, prop):
@@ -86,15 +86,15 @@ def compute_combined_crowd(point):
     # Normalize sum back to 0-100
     return (total / (len(geo_layers) * 100)) * 100
 
-HCL['baseline_crowd_levels'] = HCL['geometry'].apply(compute_combined_crowd)
+CL['baseline_crowd_levels'] = CL['geometry'].apply(compute_combined_crowd)
 
 # Placeholder for weathers
-HCL['weather_index'] = None
+CL['weather_index'] = None
 
 # Drop geometry
-HCL = HCL.drop(columns='geometry')
+CL = CL.drop(columns='geometry')
 
 # --------------------------------------------------------
-# Save HCL
-HCL.to_csv("HCL.csv", index=False)
-print(HCL)
+# Save CL
+CL.to_csv("CL.csv", index=False)
+print(CL)
