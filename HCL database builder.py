@@ -1,73 +1,100 @@
 """
-Builds Historical Crowd Levels (HCL) database selecting columns from multiple datasets
+Builds Crowd Levels (CL) database selecting columns from multiple outsourced datasets
 """
 
 import requests
 import pandas as pd
 from datetime import timedelta
 from collections import Counter
-import pandas as pd
-import sqlite3
-
-# OpenData BCN - Cultural Interest Points
-POIs = pd.DataFrame(requests.get("https://opendata-ajuntament.barcelona.cat/data/api/action/datastore_search?resource_id=31431b23-d5b9-42b8-bcd0-a84da9d8c7fa&limit=32000").json()["result"]["records"])
-
-# OpenData BCN - Events Agenda
-agenda = pd.DataFrame(requests.get("https://opendata-ajuntament.barcelona.cat/data/api/action/datastore_search?resource_id=877ccf66-9106-4ae2-be51-95a9f6469e4c&limit=32000").json()["result"]["records"])
-
-# OpenData BCN - Crowd levels Geopackages
-r = requests.get("https://opendata-ajuntament.barcelona.cat/data/dataset/fb8d92bd-13ca-42c8-b364-1e05b03d8c08/resource/6f6f5330-e9ef-42d3-82f5-d6739d3469a0/download/2016_turisme_oci.gpkg", stream=True)
-r.raise_for_status()
-with open("2016_turisme_oci.gpkg", "wb") as f:
-    for chunk in r.iter_content(chunk_size=8192):
-        f.write(chunk)
-conn = sqlite3.connect("2016_turisme_oci.gpkg")
-layer = pd.read_sql("SELECT * FROM '2016_turisme_oci';", conn)
-print(layer.head())
+import geopandas as gpd
+from shapely.geometry import Point
+from sklearn.preprocessing import MinMaxScaler
 
 # --------------------------------------------------------
+# Load Cultural Interest Points (POIs)
+url_pois = "https://opendata-ajuntament.barcelona.cat/data/api/action/datastore_search?resource_id=31431b23-d5b9-42b8-bcd0-a84da9d8c7fa&limit=32000"
+POIs = pd.DataFrame(requests.get(url_pois).json()["result"]["records"])
+POIs['longitude'] = pd.to_numeric(POIs['geo_epgs_4326_lon'])
+POIs['latitude'] = pd.to_numeric(POIs['geo_epgs_4326_lat'])
 
-# Our Database - Historical Crowd Levels
-HCL = pd.DataFrame(columns=["place", "longitude", "latitude", "events", "weathers", "crowd_levels"])
+# Convert POIs to GeoDataFrame
+gdf_pois = gpd.GeoDataFrame(POIs, geometry=gpd.points_from_xy(POIs['longitude'], POIs['latitude']), crs="EPSG:4326")
 
-# Adding places names and their locations
-HCL['place'] = POIs['name']
-HCL['longitude'] = pd.to_numeric(POIs['geo_epgs_4326_lon'])
-HCL['latitude'] = pd.to_numeric(POIs['geo_epgs_4326_lat'])
+# --------------------------------------------------------
+# Load Events Agenda
+url_agenda = "https://opendata-ajuntament.barcelona.cat/data/api/action/datastore_search?resource_id=877ccf66-9106-4ae2-be51-95a9f6469e4c&limit=32000"
+agenda = pd.DataFrame(requests.get(url_agenda).json()["result"]["records"])
 
-# Adding timestamped number of events
+# Clean dates and coordinates
 agenda = agenda.dropna(subset=['start_date'])
 agenda['start_date'] = pd.to_datetime(agenda['start_date'])
 agenda['end_date'] = pd.to_datetime(agenda['end_date']).fillna(agenda['start_date'])
-
 agenda['latitude'] = pd.to_numeric(agenda['geo_epgs_4326_lat'])
 agenda['longitude'] = pd.to_numeric(agenda['geo_epgs_4326_lon'])
 
+# Function to check nearby events using a small distance threshold
 def is_near(lat1, lon1, lat2, lon2, threshold=0.001):
     return abs(lat1 - lat2) < threshold and abs(lon1 - lon2) < threshold
 
-for i, place in HCL.iterrows():
-    # find nearby events
-    nearby_events = agenda[
-        agenda.apply(lambda x: is_near(place['latitude'], place['longitude'], x['latitude'], x['longitude']), axis=1)
-    ]
+# Compute total number of events per POI
+def get_total_events(lat, lon):
+    nearby = agenda[agenda.apply(lambda x: is_near(lat, lon, x['latitude'], x['longitude']), axis=1)]
+    return len(nearby)  # total number of events
+
+# --------------------------------------------------------
+# Load geospatial datasets
+datasets = {
+    "turisme_oci": ("datasets/turisme_oci.geojson", "DN"),
+    "turisme_allotjament": ("datasets/turisme_allotjament.geojson", "DN"),
+    "turisme_atractius": ("datasets/turisme_atractius.geojson", "DN"),
+    "densitat_poblacio": ("datasets/densitat_poblacio.geojson", "d_pobTotal"),
+    "turisme_intensitat": ("datasets/turisme_intensitat.geojson", "gridcode"),
+    "turisme_huts": ("datasets/turisme_huts.geojson", "gridcode")
+}
+
+geo_layers = []
+
+for name, (path, prop) in datasets.items():
+    gdf = gpd.read_file(path)
+    gdf = gdf.to_crs("EPSG:4326")  # match POIs CRS
+    gdf = gdf.dropna(subset=[prop])
     
-    all_dates = [] # list to collect all dates of nearby events
+    # Normalize feature 0-100
+    scaler = MinMaxScaler(feature_range=(0, 100))
+    gdf[prop + "_norm"] = scaler.fit_transform(gdf[[prop]].astype(float))
     
-    for _, event in nearby_events.iterrows():
-        num_days = (event['end_date'] - event['start_date']).days + 1
-        event_dates = [(event['start_date'] + timedelta(days=d)).strftime('%Y-%m-%d') for d in range(num_days)]
-        all_dates.extend(event_dates)
-    
-    date_counts = dict(Counter(all_dates)) # count how many events occur on each date
-    HCL.at[i, 'events'] = date_counts
+    geo_layers.append((gdf, prop + "_norm"))
 
-# Adding timestamped weather conditions
+# --------------------------------------------------------
+# Build HCL DataFrame
+HCL = gdf_pois[['name', 'longitude', 'latitude', 'geometry']].copy()
 
-# Adding timestamped crowd levels
+# Compute events count
+HCL['events_index'] = HCL.apply(lambda row: get_total_events(row['latitude'], row['longitude']), axis=1)
+# Normalize events to 0-100
+min_val = HCL['events_index'].min()
+max_val = HCL['events_index'].max()
+if max_val > min_val: HCL['events_index'] = ((HCL['events_index'] - min_val) / (max_val - min_val)) * 100
 
-# Check results
-print(HCL)
+# Compute combined normalized crowd levels
+def get_max_for_point(point, gdf, prop):
+    inside = gdf[gdf.contains(point)]
+    return inside[prop].max() if not inside.empty else 0
 
-# Save HCL as csv
+def compute_combined_crowd(point):
+    total = sum(get_max_for_point(point, gdf, prop) for gdf, prop in geo_layers)
+    # Normalize sum back to 0-100
+    return (total / (len(geo_layers) * 100)) * 100
+
+HCL['baseline_crowd_levels'] = HCL['geometry'].apply(compute_combined_crowd)
+
+# Placeholder for weathers
+HCL['weather_index'] = None
+
+# Drop geometry
+HCL = HCL.drop(columns='geometry')
+
+# --------------------------------------------------------
+# Save HCL
 HCL.to_csv("HCL.csv", index=False)
+print(HCL)
