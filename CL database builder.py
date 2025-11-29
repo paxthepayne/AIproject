@@ -69,13 +69,6 @@ for name, (path, prop) in datasets.items():
 # Build CL DataFrame
 CL = gdf_pois[['name', 'longitude', 'latitude', 'geometry']].copy()
 
-# Compute events count
-CL['events_index'] = CL.apply(lambda row: get_total_events(row['latitude'], row['longitude']), axis=1)
-# Normalize events to 0-100
-min_val = CL['events_index'].min()
-max_val = CL['events_index'].max()
-if max_val > min_val: CL['events_index'] = ((CL['events_index'] - min_val) / (max_val - min_val)) * 100
-
 # Compute combined normalized crowd levels
 def get_max_for_point(point, gdf, prop):
     inside = gdf[gdf.contains(point)]
@@ -86,7 +79,14 @@ def compute_combined_crowd(point):
     # Normalize sum back to 0-100
     return (total / (len(geo_layers) * 100)) * 100
 
-CL['baseline_crowd_levels'] = CL['geometry'].apply(compute_combined_crowd)
+CL['crowd_index'] = CL['geometry'].apply(compute_combined_crowd)
+
+# Compute events count
+CL['events_index'] = CL.apply(lambda row: get_total_events(row['latitude'], row['longitude']), axis=1)
+# Normalize events to 0-100
+min_val = CL['events_index'].min()
+max_val = CL['events_index'].max()
+if max_val > min_val: CL['events_index'] = ((CL['events_index'] - min_val) / (max_val - min_val)) * 100
 
 # Placeholder for weathers
 CL['weather_index'] = None
