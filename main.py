@@ -1,142 +1,101 @@
 import datetime
-import random
+import pandas as pd
+from difflib import get_close_matches
+import streamlit as st
+import os
 
-# MODULE 1: DATA MANAGER
-# > Handles APIs for Weather, Events, and Static POI data.
+# ---- Load CSV ----
+@st.cache_data
+def load_CL():
+    base_dir = os.path.dirname(__file__)
+    CL_path = os.path.join(base_dir, "CL.csv")
+    return pd.read_csv(CL_path)
+
+CL = load_CL()
+
+if CL.empty:
+    st.stop()
+
+# ---- MODULES ----
 class DataManager:
-    def __init__(self):
-        # Simulation of database loading
-        print("Loading POI attributes and historical data...")
-
-    def get_current_context(self):
-        """
-        Fetches real-time data from Meteocat API and Open Data BCN.
-        """
+    def get_current_context(self, weather_choice):
         return {
             "time": datetime.datetime.now(),
-            "weather": "Sunny",  # Placeholder 
-            "events": ["Concert at Palau Sant Jordi"] # Placeholder 
+            "weather": weather_choice,
+            "events": []
         }
 
-    def get_poi_details(self, poi_name):
-        # Mock database return
-        return {"name": poi_name, "type": "Monument", "location": (41.4036, 2.1744)}
-
-
-# MODULE 2: CROWD PREDICTOR
-# > Uses regression to estimate crowd levels per hour.
 class CrowdPredictor:
-    def __init__(self):
-        # Load your trained Regression Model here (e.g., sklearn, PyTorch)
-        pass
+    def predict_crowd(self, location, context):
+        names = CL['name'].tolist()
+        closest = get_close_matches(location, names, n=1, cutoff=0.6)
 
-    def predict_crowd(self, location, time, context):
-        """
-        Input: Location, Time, Weather, Events.
-        Output: Predicted crowd level (0-100).
-        """
-        
-        print(f"   [Predictor] Calculating regression for {location} at {time}...")
-        
-        # PLACEHOLDER: Random crowd level for demonstration
-        estimated_level = random.randint(10, 90) 
-        return estimated_level
+        if not closest:
+            return None, "⚠️ No close match found!"
 
+        best_match = closest[0]
+        weather = context['weather']
 
-# MODULE 3: SMART RECOMMENDER
-# > Optimization problem to find (Place, Time) pairs.
+        row = CL[CL['name'] == best_match].iloc[0]
+        base_value = row.get("baseline_crowd_levels", row.get("crowd_index", None))
+
+        if base_value is None:
+            return None, "❌ No crowd level column found!"
+
+        modifier = 2 if weather == "Sunny" else (0.5 if weather == "Rainy" else 1)
+        estimated = min(100, base_value * modifier)
+
+        return estimated, f"Closest match: **{best_match}**"
+
 class SmartRecommender:
     def __init__(self, predictor):
         self.predictor = predictor
 
-    def get_alternatives(self, desired_destination, current_context):
-        """
-        If the main destination is crowded, find similar places or better times.
-        Uses A* search to minimize 'cost' (crowd + discomfort).
-        """
-        print("   [Recommender] Analyzing alternatives...")
-        
-        # Logic: Search for similar POIs in the 'Attributes Database' 
+    def get_alternatives(self, desired_destination, context):
         alternatives = ["Park de la Ciutadella", "Hospital de Sant Pau"]
-        
-        ranked_results = []
+        rankings = []
+
         for alt in alternatives:
-            crowd = self.predictor.predict_crowd(alt, current_context['time'], current_context)
-            # Cost function = Crowd + Distance + Attributes Match 
-            cost = crowd # Simplified for now
-            ranked_results.append((alt, crowd, cost))
-            
-        # Sort by lowest cost
-        ranked_results.sort(key=lambda x: x[2])
-        return ranked_results
+            lvl, _ = self.predictor.predict_crowd(alt, context)
+            if lvl is not None:
+                rankings.append((alt, lvl))
 
+        return sorted(rankings, key=lambda x: x[1])
 
-# MODULE 4: INTELLIGENT ROUTER
-# > Pathfinding on city graph minimizing crowd exposure.
-class IntelligentRouter:
-    def calculate_route(self, start, end, current_context):
-        """
-        Implements A* algorithm on the city graph (OpenStreetMap).
-        Heuristic: Straight line distance + Minimum crowd estimation.
-        """
-        print(f"   [Router] Running A* algorithm from {start} to {end}...")
-        
-        # TODO: Load Graph from OpenStreetMap 
-        # TODO: Implement A* where edge weights include 'crowd predictions'
-        
-        return f"Route: {start} -> Via Laietana -> {end} (Time: 25 mins, Low Congestion)"
+# ---- STREAMLIT UI ----
+st.title("🌆 Barcelona Smart Tourist Guide")
+st.write("Reroute tourists to avoid crowded areas and ease city congestion")
 
+location_input = st.text_input("📍 Enter a destination:", "Sagrada Família - Basilica")
+weather_choice = st.selectbox("☁️ Select weather:", ["Sunny", "Cloudy", "Rainy"])
 
-# MAIN ORCHESTRATOR
-# > Manages User Inputs and System Flow.
-def main():
-    print("--- Barcelona Smart Tourist Guide AI ---")
-    
-    # 1. Initialize Modules
-    data_manager = DataManager()
+if st.button("Predict Crowd Level"):
+    st.subheader("🔍 Results")
+
+    dm = DataManager()
     predictor = CrowdPredictor()
-    recommender = SmartRecommender(predictor)
-    router = IntelligentRouter()
+    context = dm.get_current_context(weather_choice)
 
-    # 2. User Inputs 
-    current_location = "Plaza Catalunya"
-    desired_destination = "Sagrada Família" 
-    print(f"\nUser Request: {current_location} -> {desired_destination}")
+    crowd_level, info_msg = predictor.predict_crowd(location_input, context)
 
-    # 3. Get Environmental Context 
-    context = data_manager.get_current_context()
-    print(f"Context: {context['time'].strftime('%H:%M')}, Weather: {context['weather']}")
+    if info_msg:
+        st.info(info_msg)
 
-    # 4. Estimate Crowd Levels 
-    crowd_level = predictor.predict_crowd(desired_destination, context['time'], context)
-    print(f"Predicted Crowd Level at {desired_destination}: {crowd_level}/100")
+    if crowd_level is not None:
+        st.metric(label="Estimated Crowd Level", value=f"{int(crowd_level)}/100")
 
-    # 5. Decision Logic
-    CROWD_THRESHOLD = 70 # Threshold to trigger alternatives
-    
-    if crowd_level > CROWD_THRESHOLD:
-        print(f"\n[!] Warning: High congestion detected at {desired_destination}.")
-        
-        # 6. Rank Alternative Destinations 
-        alternatives = recommender.get_alternatives(desired_destination, context)
-        best_alt = alternatives[0]
-        
-        print(f"Recommendation: Consider visiting {best_alt[0]} instead.")
-        print(f"Reason: Lower crowd level ({best_alt[1]}/100).")
-        
-        # Ask user (simulated)
-        final_dest = best_alt[0] 
+        CROWD_THRESHOLD = 70
+        if crowd_level > CROWD_THRESHOLD:
+            st.warning("High congestion expected!")
+
+            recommender = SmartRecommender(predictor)
+            alternatives = recommender.get_alternatives(location_input, context)
+
+            if alternatives:
+                st.write("### 🏖 Recommended Alternatives")
+                for name, lvl in alternatives:
+                    st.write(f"- **{name}** → {int(lvl)}/100")
     else:
-        print("\n[OK] Crowd levels are acceptable.")
-        final_dest = desired_destination
+        st.error("Could not estimate crowd level.")
 
-    # 7. Suggest Path
-    # Calculates route minimizing exposure to crowds
-    route_solution = router.calculate_route(current_location, final_dest, context)
-    
-    # 8. Visualization
-    print(f"\nFinal Navigation: {route_solution}")
-    print("Displaying Map Visualization...")
-
-if __name__ == "__main__":
-    main()
+st.caption("🔧 Prototype model – planned upgrades: hourly predictions, weather API, events API, smart routing")
