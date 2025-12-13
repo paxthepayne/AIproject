@@ -1,48 +1,23 @@
-import pandas as pd
 import random
-import json
 
-# Load streets map
-streets = pd.read_json("map_streets.json").set_index('id')
-
-# Load nodes map
-with open("map_nodes.json", "r") as f:
-    node_to_streets = json.load(f)
-
-# Setup
-START = 1
-GOAL = 50000
-# Updated Parameters
-PARAMETERS = [
-    0.7,    # alpha (learning rate) - reduced for stability
-    0.999,  # alpha decay - slower decay
-    0.99,   # gamma (discount) - INCREASED to see further ahead
-    1.0,    # epsilon (initial exploration)
-    0.995   # epsilon decay
-]
-
-def calculate_reward(state, next_state):
-
-    if next_state == GOAL:
-        reward = 10000
-    else:
-        reward = -1 
+def calculate_reward(state, next_state, goal, streets):
+    # Basic reward
+    if next_state == goal: reward = 10000
+    else: reward = -1 
     
-    # OPTIONAL: Simple Potential-Based Shaping (Heuristic)
-    # This helps guide the agent without getting it stuck in local optima
-    # (Requires calculating distance for state and next_state)
+    # Distance calculations
     lat1, lon1 = streets.at[state, "coordinates"]
     lat2, lon2 = streets.at[next_state, "coordinates"]
-    goal_lat, goal_lon = streets.at[GOAL, "coordinates"]
+    goal_lat, goal_lon = streets.at[goal, "coordinates"]
     dist_current = abs(lat1 - goal_lat) + abs(lon1 - goal_lon)
     dist_next = abs(lat2 - goal_lat) + abs(lon2 - goal_lon)
     
-    if dist_next < dist_current:
-        reward += 1.0  # Small bonus for moving in the right direction
+    # Bonus for moving in the right direction
+    if dist_next < dist_current: reward += 1  
     
     return reward
 
-def choose_action(state, epsilon, Q):
+def choose_action(state, epsilon, Q, goal, streets, node_to_streets):
     # Get connections
     u_node, v_node = streets.at[state, "connections"]
     neighbors_u = node_to_streets.get(str(u_node), [])
@@ -66,26 +41,29 @@ def choose_action(state, epsilon, Q):
         best = [a for a in next_states if Q[state][a] == max_q]
         next_state = random.choice(best)
 
-    return next_state, calculate_reward(state, next_state)
+    return next_state, calculate_reward(state, next_state, goal, streets)
 
-def train(start, goal, parameters, episodes=1000, pathfind=False):
+def train(start, goal, streets, node_to_streets, parameters=[0.7, 0.999, 0.99, 1.0, 0.995], episodes=3000, min_delta=0.1, patience=3):
     Q = {}
     alpha, a_decay, gamma, epsilon, e_decay = parameters
     
-    print(f"Training from street {start} to {goal}...")
+    print(f"[Q-Learning] from '{streets.at[start, "name"]}' to '{streets.at[goal, "name"]}'")
+    
+    stable_episodes = 0 # Counter for convergence check
 
     for episode in range(episodes):
         path = [start]
         state = start
         steps = 0
+        max_change = 0 # Track max Q-value change this episode
         
         # Calculate current decays
         curr_alpha = max(alpha * (a_decay ** episode), 0.01)
         curr_epsilon = max(epsilon * (e_decay ** episode), 0.01)
-        if episode == episodes-1: curr_epsilon = 0
+        
         while state != goal and steps < 3000:
 
-            next_state, reward = choose_action(state, curr_epsilon, Q)
+            next_state, reward = choose_action(state, curr_epsilon, Q, goal, streets, node_to_streets)
             
             # Ensure next state exists in Q
             if next_state not in Q:
@@ -94,20 +72,29 @@ def train(start, goal, parameters, episodes=1000, pathfind=False):
             # Q-Learning
             max_next_q = max(Q[next_state].values()) if Q[next_state] else 0.0
             current_q = Q[state].get(next_state, 0.0)
-            Q[state][next_state] = current_q + curr_alpha * (reward + gamma * max_next_q - current_q)
+            
+            # Calculate new value
+            new_q = current_q + curr_alpha * (reward + gamma * max_next_q - current_q)
+            Q[state][next_state] = new_q
+            
+            # Track change for convergence
+            diff = abs(new_q - current_q)
+            if diff > max_change: max_change = diff
 
             # Progress
-            if episode == episodes-1: path.append(next_state)
+            path.append(next_state)
             state = next_state
             steps += 1
 
-        if episode % 20 == 0:
-            print(f"Episode {episode}: {steps} steps. Epsilon: {curr_epsilon:.4f}")
-            
-    if pathfind: 
-        return path
+        # Check for convergence
+        if max_change < min_delta: stable_episodes += 1
+        else: stable_episodes = 0
+        
+        if stable_episodes >= patience:
+            print(f"-> Values converged at episode {episode} (max Δ = {min_delta}, patience = {patience})")
+            break
 
-
-# --- TEST ---
-path = train(START, GOAL, PARAMETERS, pathfind=True)
-print(f"Path found ({len(path)} steps): {path}")
+        if episode % 200 == 100 and episode != 0:
+            print(f"· Episode {episode}: {steps} steps, Δ = {max_change:.4f}")
+             
+    return path
