@@ -1,40 +1,40 @@
 """
-Class that manages everything
+Main execution script for Smart Crowd Router.
+Manages data loading, user interaction, and pathfinding execution.
 """
-import q_learning
+
 import pandas as pd
-import json
+import datetime
+import random
+import q_learning
 
-# -----------------------------------------------------------------------------
-# Load data for Q-learning
-# -----------------------------------------------------------------------------
+print(f"[AI Project - Smart Crowd Router] \nBy ______________________________\n")
 
-# Maps for agent movement
-streets = pd.read_json("map_streets.json").set_index('id') # streets table ["id", "name", "connections", "coordinates"]
-with open("map_nodes.json", "r") as f: node_to_streets = json.load(f) # dictionary for fast 'neighbour streets' lookup
+# Load Data
+streets = pd.read_json("map.json").set_index('id')
 
-# Crowd Maps for reward calculation
-# calculate crowd level of every street
+# Environment Setup
+now = datetime.datetime.now()
+print(f"[{now.strftime('%A %H:00')} - Sunny]")
 
-# -----------------------------------------------------------------------------
-# Interact with the user
-# -----------------------------------------------------------------------------
-print(f"--- Title of the program ---\n")
+# Location Selection
+named_streets = streets[streets['name'] != "Calle sin nombre"].index
 
-# User inputs
-# Get coordinates of user and find closest street
-start = 0
-print(f"Start location: {streets.at[start, "name"]}")
-# Get coordinates of destination and find closest street
-goal = 500
-print(f"Destination: {streets.at[goal, "name"]}\n")
+start = random.choice(named_streets)
+print(f"· Location: {streets.at[start, 'name']} (id {start})")
+
+goal = random.choice(named_streets)
+print(f"· Destination: {streets.at[goal, 'name']} (id {goal})\n")
 
 # Pathfinding
-path = q_learning.train(start, goal, streets, node_to_streets)
+path = q_learning.train(start, goal, streets)
 
-# Report results (path found, walk time, expected crowd exposure, maybe compare with shortest path?)
-names = []
-for id in path:
-    name = streets.at[id, "name"]
-    if (not names or names[-1] != name) and name != "Calle sin nombre": names.append(name)
-print(f"\nPath found:", " -> ".join(names))
+# Report Results
+path_names = streets.loc[path, "name"].tolist()
+clean_path = []
+
+for name in path_names:
+    if name != "Calle sin nombre" and (not clean_path or clean_path[-1] != name):
+        clean_path.append(name)
+
+print(f"\n[Path found - {len(path)-1} steps]\n" + " -> ".join(clean_path))
