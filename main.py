@@ -30,6 +30,7 @@ print(f"· Destination: {streets.at[goal, 'name']} (id {goal})\n")
 path = q_learning.train(start, goal, streets)
 
 # Report Results
+total_length = streets.loc[path, "length"].sum()
 path_names = streets.loc[path, "name"].tolist()
 clean_path = []
 
@@ -37,4 +38,4 @@ for name in path_names:
     if name != "Calle sin nombre" and (not clean_path or clean_path[-1] != name):
         clean_path.append(name)
 
-print(f"\n[Path found - {len(path)-1} steps]\n" + " -> ".join(clean_path))
+print(f"\n[Path found] {int(total_length)} meters\n" + " -> ".join(clean_path))

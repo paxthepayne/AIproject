@@ -8,7 +8,7 @@ import osmnx as ox
 print("Building 'map.json'...")
 
 # Get Data
-G = ox.graph_from_place("Barcelona, Spain", network_type='walk', simplify=True)
+G = ox.graph_from_place("El Gòtic, Barcelona, Spain", network_type='walk', simplify=True)
 _, edges = ox.graph_to_gdfs(G)
 edges = edges.reset_index()
 
