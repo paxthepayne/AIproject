@@ -7,7 +7,7 @@ import pandas as pd
 import datetime
 import pickle
 import tools
-from multiprocessing import Pool, cpu_count
+from multiprocessing import Pool
     
 def run_train(args):
     return tools.train(*args)
@@ -21,8 +21,8 @@ if __name__ == "__main__":
 
     # Time and Weather
     current_time = datetime.datetime.now()
-    weather = "Sunny"
-    print(f"[{current_time.strftime('%A %I:%M')} - {weather}]\n")
+    weather = tools.get_barcelona_weather("")
+    print(f"[{current_time.strftime('%A %H:%M')} - {weather}]\n")
 
     # Location Selection
     start_name, start = tools.find_place(city_map, start_id=None, point_type="start")

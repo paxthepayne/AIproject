@@ -4,6 +4,34 @@ import pandas as pd
 from difflib import SequenceMatcher
 import re
 import unicodedata
+import requests
+
+def get_barcelona_weather(api_key):
+    lat, lon = 41.3851, 2.1734
+
+    url = "https://weather.googleapis.com/v1/currentConditions:lookup"
+    params = {
+        "key": api_key,
+        "location.latitude": lat,
+        "location.longitude": lon
+    }
+
+    try:
+        resp = requests.get(url, params=params, timeout=5)
+        data = resp.json()
+
+        wtype = data["weatherCondition"]["type"]
+
+        if wtype in ["CLEAR"]:
+            return "Sunny"
+        if wtype in ["CLOUDY", "MOSTLY_CLOUDY", "PARTLY_CLOUDY"]:
+            return "Cloudy"
+        if wtype in ["RAIN", "LIGHT_RAIN", "HEAVY_RAIN", "SHOWERS", "THUNDERSTORMS"]:
+            return "Rainy"
+
+        return "Cloudy"
+    except Exception:
+        return "Cloudy"
 
 # ==========================================
 # 1. GEOMETRY & SEARCH TOOLS
