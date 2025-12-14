@@ -41,15 +41,21 @@ if __name__ == "__main__":
 
     # Report Results
     path_length = city_map.loc[path, "length"].sum()
+    shortest_path_length = city_map.loc[shortest_path, "length"].sum()
     delta_length = path_length - city_map.loc[shortest_path, "length"].sum()
     path_names = city_map.loc[path, "name"].tolist()
     shortest_path_names = city_map.loc[shortest_path, "name"].tolist()
+
+    # Crowd exposure
+    path_total_crowd = 0
+    for street in path: path_total_crowd += tools.estimate_crowd(city_map, street, current_time, weather)
+    shortest_path_total_crowd = 0
+    for street in shortest_path: shortest_path_total_crowd += tools.estimate_crowd(city_map, street, current_time, weather)
 
     # Clean up path (remove duplicates and unnamed streets for display)
     clean_path = tools.clean(path_names)
     clean_shortest_path = tools.clean(shortest_path_names)
 
-
-    print(f"\n[Path found] {int(path_length)} meters {("("+str(int(delta_length))+" more than shortest)") if int(delta_length)>0 else ""}")
+    print(f"\n[Path found] {int(path_length)} meters | {path_total_crowd} total crowd")
     print(" -> ".join(clean_path))
-    print("[Shortest path]\n" + " -> ".join(clean_shortest_path) + "\n")
+    print(f"[Shortest path] {int(shortest_path_length)} meters | {shortest_path_total_crowd} total crowd\n" + " -> ".join(clean_shortest_path) + "\n")
