@@ -1167,7 +1167,7 @@
   },
   {
     "id":56,
-    "name":"Carrer del Vidre",
+    "name":"Pla\u00e7a Reial",
     "length":98.4836022661,
     "center":[
       41.3799071981,
@@ -4597,7 +4597,7 @@
   },
   {
     "id":215,
-    "name":"Carrer de la Ciutat",
+    "name":"Pla\u00e7a del Regomir",
     "length":42.4506768175,
     "center":[
       41.3818599236,
@@ -6381,7 +6381,7 @@
   },
   {
     "id":300,
-    "name":"Carrer dels Escudellers Blancs",
+    "name":"Carrer de n'Agl\u00e0",
     "length":119.2796952178,
     "center":[
       41.3803270279,
@@ -6705,7 +6705,7 @@
   },
   {
     "id":316,
-    "name":"Carrer d'H\u00e8rcules",
+    "name":"Pla\u00e7a de Sant Just",
     "length":47.3645128224,
     "center":[
       41.3828956186,
@@ -8649,7 +8649,7 @@
   },
   {
     "id":410,
-    "name":"Carrer del Cardenal Casa\u00f1as",
+    "name":"Pla\u00e7a de la Boqueria",
     "length":53.6577083297,
     "center":[
       41.3816123769,
@@ -9491,7 +9491,7 @@
   },
   {
     "id":451,
-    "name":"Carrer de la Ciutat",
+    "name":"Pla\u00e7a de Sant Jaume",
     "length":35.0214307423,
     "center":[
       41.382661213,
@@ -9557,7 +9557,7 @@
   },
   {
     "id":454,
-    "name":"Carrer d'H\u00e8rcules",
+    "name":"Pla\u00e7a de Sant Just",
     "length":47.3645128224,
     "center":[
       41.3828956186,
@@ -10593,7 +10593,7 @@
   },
   {
     "id":504,
-    "name":"Avinguda de la Catedral",
+    "name":"Carrer del Doctor Joaquim Pou",
     "length":52.4424098939,
     "center":[
       41.3851555117,
@@ -11193,7 +11193,7 @@
   },
   {
     "id":534,
-    "name":"Carrer de Sant Felip Neri",
+    "name":"Carrer de Montju\u00efc del Bisbe",
     "length":117.6188495071,
     "center":[
       41.3834545941,
@@ -11625,7 +11625,7 @@
   },
   {
     "id":555,
-    "name":"Passatge de Madoz",
+    "name":"Pla\u00e7a Reial",
     "length":91.8613290322,
     "center":[
       41.3803582474,
@@ -11689,7 +11689,7 @@
   },
   {
     "id":558,
-    "name":"Carrer de Sant Honorat",
+    "name":"Pla\u00e7a de Sant Jaume",
     "length":50.5905860238,
     "center":[
       41.3827543632,
@@ -12649,7 +12649,7 @@
   },
   {
     "id":608,
-    "name":"Baixada de Santa Clara",
+    "name":"Carrer del Veguer",
     "length":45.0530659103,
     "center":[
       41.3839080038,
@@ -12727,7 +12727,7 @@
   },
   {
     "id":612,
-    "name":"Baixada de Santa Clara",
+    "name":"Carrer del Veguer",
     "length":45.0530659103,
     "center":[
       41.3839080038,
@@ -13157,7 +13157,7 @@
   },
   {
     "id":633,
-    "name":"Carrer de Jaume I",
+    "name":"Via Laietana",
     "length":7.1644109106,
     "center":[
       41.3839235042,
@@ -13179,7 +13179,7 @@
   },
   {
     "id":634,
-    "name":"Carrer de Jaume I",
+    "name":"Via Laietana",
     "length":7.1172313659,
     "center":[
       41.3838778394,
@@ -14947,7 +14947,7 @@
   },
   {
     "id":720,
-    "name":"Rambla de Mar",
+    "name":"Vial Moll de Bosch i Alsina",
     "length":6.030689531,
     "center":[
       41.3755516103,
@@ -15015,7 +15015,7 @@
   },
   {
     "id":723,
-    "name":"Carrer de Josep Anselm Clav\u00e9",
+    "name":"La Rambla",
     "length":91.2368028339,
     "center":[
       41.3768399566,
@@ -15227,7 +15227,7 @@
   },
   {
     "id":734,
-    "name":"Carrer de Josep Anselm Clav\u00e9",
+    "name":"La Rambla",
     "length":91.2368028339,
     "center":[
       41.3768399566,
@@ -16687,7 +16687,7 @@
   },
   {
     "id":805,
-    "name":"Passeig de Colom",
+    "name":"Carrer d'en Boltres",
     "length":9.8157109377,
     "center":[
       41.3790440441,
@@ -17075,7 +17075,7 @@
   },
   {
     "id":822,
-    "name":"Passeig de Colom",
+    "name":"Carrer de Sim\u00f3 Oller",
     "length":7.7371678901,
     "center":[
       41.3795957027,
@@ -17207,7 +17207,7 @@
   },
   {
     "id":828,
-    "name":"Passeig de Colom",
+    "name":"Vial Moll de Bosch i Alsina",
     "length":29.8055551601,
     "center":[
       41.3808063006,
@@ -17229,7 +17229,7 @@
   },
   {
     "id":829,
-    "name":"Passeig de Colom",
+    "name":"Vial Moll de Bosch i Alsina",
     "length":29.8055551601,
     "center":[
       41.3808063006,
@@ -19599,7 +19599,7 @@
   },
   {
     "id":946,
-    "name":"Carrer del Regomir",
+    "name":"Pla\u00e7a del Regomir",
     "length":15.0203797677,
     "center":[
       41.381580788,
@@ -21285,7 +21285,7 @@
   },
   {
     "id":1028,
-    "name":"Carrer de la Ciutat",
+    "name":"Pla\u00e7a de Sant Jaume",
     "length":35.0214307423,
     "center":[
       41.382661213,
@@ -21479,7 +21479,7 @@
   },
   {
     "id":1037,
-    "name":"Carrer de Sant Felip Neri",
+    "name":"Carrer de Montju\u00efc del Bisbe",
     "length":117.6188495071,
     "center":[
       41.3834545941,
@@ -21689,7 +21689,7 @@
   },
   {
     "id":1047,
-    "name":"Avinguda de la Catedral",
+    "name":"Carrer del Doctor Joaquim Pou",
     "length":52.4424098939,
     "center":[
       41.3851555117,
@@ -22411,7 +22411,7 @@
   },
   {
     "id":1082,
-    "name":"Carrer dels Boters",
+    "name":"Carrer de la Portaferrissa",
     "length":91.3183064992,
     "center":[
       41.3841401557,
@@ -22473,7 +22473,7 @@
   },
   {
     "id":1085,
-    "name":"Carrer dels Boters",
+    "name":"Carrer de la Portaferrissa",
     "length":91.3183064992,
     "center":[
       41.3841401557,
@@ -23285,7 +23285,7 @@
   },
   {
     "id":1125,
-    "name":"Carrer de la Ciutat",
+    "name":"Pla\u00e7a del Regomir",
     "length":42.4506768175,
     "center":[
       41.3818599236,
@@ -23349,7 +23349,7 @@
   },
   {
     "id":1128,
-    "name":"Carrer del Regomir",
+    "name":"Pla\u00e7a del Regomir",
     "length":15.0203797677,
     "center":[
       41.381580788,
@@ -24055,7 +24055,7 @@
   },
   {
     "id":1163,
-    "name":"Carrer de Jaume I",
+    "name":"Via Laietana",
     "length":7.1644109106,
     "center":[
       41.3839235042,
@@ -24139,7 +24139,7 @@
   },
   {
     "id":1167,
-    "name":"Carrer de Jaume I",
+    "name":"Via Laietana",
     "length":7.1172313659,
     "center":[
       41.3838778394,
@@ -26153,7 +26153,7 @@
   },
   {
     "id":1262,
-    "name":"Moll d'Espanya",
+    "name":"Rambla de Mar",
     "length":69.7481075073,
     "center":[
       41.3751754493,
@@ -28177,7 +28177,7 @@
   },
   {
     "id":1357,
-    "name":"Passeig de Colom",
+    "name":"Carrer d'en Boltres",
     "length":9.8157109377,
     "center":[
       41.3790440441,
@@ -28727,7 +28727,7 @@
   },
   {
     "id":1382,
-    "name":"Carrer de Josep Anselm Clav\u00e9",
+    "name":"Pla\u00e7a del Portal de la Pau",
     "length":45.8735631357,
     "center":[
       41.3765290017,
@@ -31707,7 +31707,7 @@
   },
   {
     "id":1528,
-    "name":"Rambla de Mar",
+    "name":"Vial Moll de Bosch i Alsina",
     "length":6.030689531,
     "center":[
       41.3755516103,
@@ -34605,7 +34605,7 @@
   },
   {
     "id":1668,
-    "name":"Carrer del Vidre",
+    "name":"Pla\u00e7a Reial",
     "length":98.4836022661,
     "center":[
       41.3799071981,
@@ -34629,7 +34629,7 @@
   },
   {
     "id":1669,
-    "name":"Passatge de Madoz",
+    "name":"Pla\u00e7a Reial",
     "length":91.8613290322,
     "center":[
       41.3803582474,
@@ -35907,7 +35907,7 @@
   },
   {
     "id":1731,
-    "name":"Carrer de Sant Honorat",
+    "name":"Pla\u00e7a de Sant Jaume",
     "length":50.5905860238,
     "center":[
       41.3827543632,
@@ -38921,7 +38921,7 @@
   },
   {
     "id":1877,
-    "name":"Passeig de Colom",
+    "name":"Carrer de Sim\u00f3 Oller",
     "length":7.7371678901,
     "center":[
       41.3795957027,
