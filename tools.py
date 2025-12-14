@@ -2,6 +2,8 @@ import math
 import random
 import pandas as pd
 from difflib import SequenceMatcher
+import re
+import unicodedata
 
 # ==========================================
 # 1. GEOMETRY & SEARCH TOOLS
@@ -53,8 +55,8 @@ def find_place(streets_df, start_id=None, point_type="start"):
             pass # Fallback to global search if start_id is invalid
 
     while True:
-        prompt = f"Enter {'destination (within 2km)' if start_id else 'current location'}"
-        query = input(f"\n📍 {prompt}: ").strip()
+        prompt = f"Enter {'destination (2km distance)' if start_id else 'your location'}"
+        query = input(f"{prompt}: ").strip()
         if not query: continue
 
         candidates = []
@@ -78,7 +80,7 @@ def find_place(streets_df, start_id=None, point_type="start"):
         
         # 3. SLOW SEARCH (Fallback): Fuzzy matching
         elif len(candidates) == 0:
-            print("   ...searching for similar names (typos)...")
+            print("Searching places...")
             
             # Optimization: If searching globally, check PLACES first
             if start_id is None:
@@ -116,27 +118,50 @@ def find_place(streets_df, start_id=None, point_type="start"):
         top_matches = final_list[:5]
 
         if not top_matches:
-            print(f"   ❌ No matches found. Try again.")
+            print(f"No matches, try again.")
             continue
-
-        print(f"   🔎 Did you mean:")
-        for i, item in enumerate(top_matches, 1):
-            ntype = "Place" if streets_df.at[item['id'], 'type'] in [1, 'place'] else "Street"
-            print(f"      {i}. {item['name']} [{ntype}]")
         
-        print("      0. None of these")
+        ntype = "Place" if streets_df.at[top_matches[0]['id'], 'type'] == 1 else "Street"
+        print(f"Best match: {top_matches[0]['name']} [{ntype}]\n")
 
-        choice = input("   👉 Select option: ").strip()
-        if choice.isdigit():
-            idx = int(choice) - 1
-            if 0 <= idx < len(top_matches):
-                return top_matches[idx]['name'], top_matches[idx]['id']
+        return top_matches[0]['name'], top_matches[0]['id']
+
+def normalize_street_name(name):
+    if not isinstance(name, str):
+        return name
+    
+    # Lowercase
+    name = name.lower()
+    
+    # Remove accents
+    name = unicodedata.normalize('NFKD', name)
+    name = ''.join(c for c in name if not unicodedata.combining(c))
+    
+    # Remove common fillers
+    name = re.sub(r'\b(de|del|la|el|plaça|plaza)\b', '', name)
+    
+    # Collapse spaces
+    name = re.sub(r'\s+', ' ', name).strip()
+    
+    return name
+
+def clean(path_names):
+    clean_path = []
+    seen = set()
+    for name in path_names:
+        if name == "Calle Sin Nombre":
+            continue
+        norm = normalize_street_name(name)
+        if norm not in seen:
+            clean_path.append(name)
+            seen.add(norm)
+    return clean_path
 
 # ==========================================
 # 2. Q-LEARNING AGENT
 # ==========================================
 
-def calculate_reward(state, next_state, goal, streets):
+def calculate_reward(state, next_state, goal, streets, time, shortest_path):
     # Basic reward structure
     if next_state == goal: reward = 10000
     else: reward = -1 
@@ -149,9 +174,23 @@ def calculate_reward(state, next_state, goal, streets):
     if dist_next < dist_current:
         reward += 1  
     
+    if not shortest_path:
+        # Crowd levels
+        populartimes_open = streets.at[next_state, "populartimes_open"]
+        populartimes_closed = streets.at[next_state, "populartimes_closed"]
+
+        crowd = 0
+        weather_multiplier = 1
+        
+        if populartimes_open is not None:
+            crowd += weather_multiplier * populartimes_open[time.weekday(), time.hour]
+        if populartimes_closed is not None:
+            crowd += populartimes_closed[time.weekday(), time.hour]
+        
+        reward -= int(crowd)
     return reward
 
-def choose_action(state, epsilon, Q, goal, streets):
+def choose_action(state, epsilon, Q, goal, streets, time, shortest_path):
     # Get connections
     next_states = streets.at[state, "connections"]
 
@@ -170,15 +209,15 @@ def choose_action(state, epsilon, Q, goal, streets):
         best = [a for a in next_states if Q[state][a] == max_q]
         next_state = random.choice(best)
 
-    return next_state, calculate_reward(state, next_state, goal, streets)
+    return next_state, calculate_reward(state, next_state, goal, streets, time, shortest_path)
 
-def train(start, goal, streets, parameters=[0.7, 0.999, 0.99, 1.0, 0.995], episodes=2000, min_delta=0.01, patience=10):
+def train(start, goal, streets, time, shortest_path=False, parameters=[0.7, 0.999, 0.99, 1.0, 0.995], episodes=2000, min_delta=0.01, patience=20):
     Q = {}
     alpha, a_decay, gamma, epsilon, e_decay = parameters
     
     start_name = streets.at[start, "name"]
     goal_name = streets.at[goal, "name"]
-    print(f"[Q-Learning] from '{start_name}' to '{goal_name}'")
+    if not shortest_path: print(f"[Q-Learning] from '{start_name}' to '{goal_name}'")
     
     stable_episodes = 0 # Counter for convergence check
 
@@ -194,7 +233,7 @@ def train(start, goal, streets, parameters=[0.7, 0.999, 0.99, 1.0, 0.995], episo
         
         while state != goal and steps < 5000:
 
-            next_state, reward = choose_action(state, curr_epsilon, Q, goal, streets)
+            next_state, reward = choose_action(state, curr_epsilon, Q, goal, streets, time, shortest_path)
             
             # Ensure next state exists in Q
             if next_state not in Q:
@@ -224,11 +263,11 @@ def train(start, goal, streets, parameters=[0.7, 0.999, 0.99, 1.0, 0.995], episo
         
         # Stop early if converged
         if stable_episodes >= patience:
-            print(f"-> Values converged at episode {episode} (max Δ = {min_delta}, patience = {patience})")
+            if not shortest_path: print(f"-> Values converged at episode {episode} (max Δ = {min_delta}, patience = {patience})")
             break
 
         # Log progress periodically
         if episode % 200 == 100 and episode != 0:
-            print(f"· Episode {episode}: {steps} steps, Δ = {max_change:.4f}")
+            if not shortest_path: print(f"· Episode {episode}: {steps} steps, Δ = {max_change:.4f}")
              
     return path
