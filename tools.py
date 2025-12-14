@@ -188,8 +188,23 @@ def clean(path_names):
 # ==========================================
 # 2. Q-LEARNING AGENT
 # ==========================================
+def estimate_crowd(streets, state, time, weather):
+    populartimes_open = streets.at[state, "populartimes_open"]
+    populartimes_closed = streets.at[state, "populartimes_closed"]
 
-def calculate_reward(state, next_state, goal, streets, time, shortest_path):
+    crowd = 0
+    if weather == "Sunny": weather_multiplier = 1.3
+    if weather == "Cloudy": weather_multiplier = 0.9
+    if weather == "Rainy": weather_multiplier = 0.3
+
+    if populartimes_open is not None:
+        crowd += weather_multiplier * populartimes_open[time.weekday(), time.hour]
+    if populartimes_closed is not None:
+        crowd += populartimes_closed[time.weekday(), time.hour]
+        
+    return crowd
+
+def calculate_reward(state, next_state, goal, streets, time, weather, shortest_path):
     # Basic reward structure
     if next_state == goal: reward = 10000
     else: reward = -1 
@@ -204,21 +219,11 @@ def calculate_reward(state, next_state, goal, streets, time, shortest_path):
     
     if not shortest_path:
         # Crowd levels
-        populartimes_open = streets.at[next_state, "populartimes_open"]
-        populartimes_closed = streets.at[next_state, "populartimes_closed"]
-
-        crowd = 0
-        weather_multiplier = 1
-        
-        if populartimes_open is not None:
-            crowd += weather_multiplier * populartimes_open[time.weekday(), time.hour]
-        if populartimes_closed is not None:
-            crowd += populartimes_closed[time.weekday(), time.hour]
-        
+        crowd = estimate_crowd(streets, next_state, time, weather)        
         reward -= int(crowd)
     return reward
 
-def choose_action(state, epsilon, Q, goal, streets, time, shortest_path):
+def choose_action(state, epsilon, Q, goal, streets, time, weather, shortest_path):
     # Get connections
     next_states = streets.at[state, "connections"]
 
@@ -237,9 +242,9 @@ def choose_action(state, epsilon, Q, goal, streets, time, shortest_path):
         best = [a for a in next_states if Q[state][a] == max_q]
         next_state = random.choice(best)
 
-    return next_state, calculate_reward(state, next_state, goal, streets, time, shortest_path)
+    return next_state, calculate_reward(state, next_state, goal, streets, time, weather, shortest_path)
 
-def train(start, goal, streets, time, shortest_path=False, parameters=[0.7, 0.999, 0.99, 1.0, 0.995], episodes=2000, min_delta=0.01, patience=20):
+def train(start, goal, streets, time, weather, shortest_path=False, parameters=[0.7, 0.999, 0.99, 1.0, 0.995], episodes=2000, min_delta=0.01, patience=20):
     Q = {}
     alpha, a_decay, gamma, epsilon, e_decay = parameters
     
@@ -261,7 +266,7 @@ def train(start, goal, streets, time, shortest_path=False, parameters=[0.7, 0.99
         
         while state != goal and steps < 5000:
 
-            next_state, reward = choose_action(state, curr_epsilon, Q, goal, streets, time, shortest_path)
+            next_state, reward = choose_action(state, curr_epsilon, Q, goal, streets, time, weather, shortest_path)
             
             # Ensure next state exists in Q
             if next_state not in Q:

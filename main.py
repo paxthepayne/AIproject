@@ -33,8 +33,8 @@ if __name__ == "__main__":
         results = pool.map(
             run_train,
             [
-                (start, goal, city_map, current_time),
-                (start, goal, city_map, current_time, True) # shortest_path = True
+                (start, goal, city_map, current_time, weather),
+                (start, goal, city_map, current_time, weather, True) # shortest_path = True
             ]
         )
     path, shortest_path = results
