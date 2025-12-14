@@ -1,7 +1,3 @@
-# ==========================================
-# map_builder.py
-# ==========================================
-
 # General
 import json
 import pickle
@@ -21,13 +17,11 @@ import googlemaps
 import populartimes
 
 
-# CONFIGURATION ------------------------------------------------------------------------------------
+# Configuration
 GOOGLE_API_KEY = ""
 TARGET_LOCATION = "Barcelona, Spain"
 OUTPUT_FILE = "map.pkl"
 MAX_WORKERS = 10
-
-# Categories considered "Open Venues"
 OPEN_CATS = [
     'park',
     'cemetery',
@@ -47,9 +41,7 @@ OPEN_CATS = [
     'subway_station',
 ]
 
-
 def parse_schedule(json_str):
-    """Parse Google's populartimes format into a 7x24 matrix"""
     data = json.loads(str(json_str))
     if not data:
         return None
@@ -58,8 +50,7 @@ def parse_schedule(json_str):
     return np.array([d['data'] for d in data])
 
 
-# DATA ACQUISITION ---------------------------------------------------------------------------------
-print(f"Fetching 'Points of Interest' Data for {TARGET_LOCATION}")
+print(f"Fetching 'Points of Interest' Data for {TARGET_LOCATION} (OpenData BCN)")
 
 raw = pd.DataFrame(
     requests.get(
@@ -76,34 +67,28 @@ places_df = pd.DataFrame({
 
 gmaps = googlemaps.Client(key=GOOGLE_API_KEY)
 
-# Initialize columns
 places_df['attributes'] = "[]"
 places_df['popular_times'] = "[]"
 
 
-# PARALLEL GOOGLE ENRICHMENT -----------------------------------------------------------------------
 def enrich_place(task):
-    """
-    Worker function for Google enrichment.
-    Returns (index, attributes_json, populartimes_json)
-    """
     i, name = task
     try:
         find = gmaps.find_place(f"{name}, Barcelona", "textquery")
         if not find['candidates']:
-            return i, None, None
+            return i, None, None, None
 
         pid = find['candidates'][0]['place_id']
-        details = gmaps.place(pid, fields=['type'])
+        details = gmaps.place(pid, fields=['name', 'type'])
         pt = populartimes.get_id(GOOGLE_API_KEY, pid)
 
-        return (
-            i,
-            json.dumps(details['result'].get('types', [])),
-            json.dumps(pt.get('populartimes', []))
-        )
+        google_name = details['result'].get('name')
+        attrs = json.dumps(details['result'].get('types', []))
+        pops = json.dumps(pt.get('populartimes', []))
+
+        return i, google_name, attrs, pops
     except Exception:
-        return i, None, None
+        return i, None, None, None
 
 
 tasks = [(i, row['name']) for i, row in places_df.iterrows()]
@@ -114,15 +99,18 @@ with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
     for future in tqdm(
         as_completed(futures),
         total=len(futures),
-        desc="Google Maps enrichment"
+        desc="Enriching POIs with Google Data"
     ):
-        i, attrs, pops = future.result()
+        i, google_name, attrs, pops = future.result()
+
+        if google_name is not None:
+            places_df.at[i, 'name'] = google_name
         if attrs is not None:
             places_df.at[i, 'attributes'] = attrs
+        if pops is not None:
             places_df.at[i, 'popular_times'] = pops
 
 
-# FILL MISSING DATA --------------------------------------------------------------------------------
 print("Computing Missing Popular Times")
 
 places_df['matrix'] = places_df['popular_times'].apply(parse_schedule)
@@ -147,8 +135,7 @@ if not sources.empty:
         places_df.at[i, 'matrix'] = (weighted / weights.sum()).astype(int)
 
 
-# STREET NETWORK -----------------------------------------------------------------------------------
-print("Building Street Network")
+print("Building Street Network (OpenStreetMap)")
 
 G = ox.graph_from_place(TARGET_LOCATION, network_type='walk')
 G_proj = ox.project_graph(G)
@@ -185,12 +172,10 @@ for _, row in edges.iterrows():
         adj_list.setdefault(n, set()).add(sid)
 
 
-# FINAL ASSEMBLY & EXPORT --------------------------------------------------------------------------
 print(f"Exporting to '{OUTPUT_FILE}'")
 
 final_nodes = {}
 
-# Streets
 for _, row in edges.iterrows():
     sid = row['node_id']
     neighbors = (adj_list[row['u']] | adj_list[row['v']]) - {sid}
@@ -198,14 +183,14 @@ for _, row in edges.iterrows():
     final_nodes[sid] = {
         'id': sid,
         'type': 0,
-        'name': row.get('name', 'Street'),
+        'name': (row['name'][0] if isinstance(row.get('name'), list) and row.get('name') else row['name'] if isinstance(row.get('name'), str) else "Calle Sin Nombre"),
         'coords': row['center'],
+        'len': float(row.get('length', 0)),
         'conns': list(neighbors),
         'pop_open': None,
         'pop_closed': None
     }
 
-# Places
 next_id = len(edges)
 for _, row in places_df.iterrows():
     pid = next_id
@@ -224,6 +209,7 @@ for _, row in places_df.iterrows():
         'type': 1,
         'name': row['name'],
         'coords': (row['lat'], row['lon']),
+        'len': 0,
         'conns': [parent_sid],
         'pop_open': matrix if is_open else None,
         'pop_closed': matrix if not is_open else None
