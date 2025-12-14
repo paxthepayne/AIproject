@@ -5,37 +5,37 @@ Manages data loading, user interaction, and pathfinding execution.
 
 import pandas as pd
 import datetime
-import random
-import q_learning
+import pickle
+import tools
 
-print(f"[AI Project - Smart Crowd Router] \nBy ______________________________\n")
+print(f"[AI Project - Smart Crowd Router] By ______________________________\n")
 
-# Load Data
-streets = pd.read_json("map.json").set_index('id')
+# Load Map Data as DataFrame
+print("Loading data...\n")
+with open("map.pkl", "rb") as f: map_data = pickle.load(f)
+city_map = pd.DataFrame(map_data).set_index('id').rename(columns={'coords': 'coordinates', 'len': 'length', 'conns': 'connections', 'pop_open': 'populartimes_open', 'pop_closed': 'populartimes_closed'})
 
-# Environment Setup
+# Time and Weather
 now = datetime.datetime.now()
-print(f"[{now.strftime('%A %H:00')} - Sunny]")
+weather = "Sunny"
+print(f"[{now.strftime('%A %H:00')} - {weather}]")
 
 # Location Selection
-named_streets = streets[streets['name'] != "Calle sin nombre"].index
-
-start = random.choice(named_streets)
-print(f"· Location: {streets.at[start, 'name']} (id {start})")
-
-goal = random.choice(named_streets)
-print(f"· Destination: {streets.at[goal, 'name']} (id {goal})\n")
+start_name, start = tools.find_place(city_map, start_id=None, point_type="start")
+goal_name, goal = tools.find_place(city_map, start_id=start, point_type="goal")
 
 # Pathfinding
-path = q_learning.train(start, goal, streets)
+path = tools.train(start, goal, city_map)
 
 # Report Results
-total_length = streets.loc[path, "length"].sum()
-path_names = streets.loc[path, "name"].tolist()
-clean_path = []
+total_length = city_map.loc[path, "length"].sum()
+path_names = city_map.loc[path, "name"].tolist()
 
+# Clean up path (remove duplicates and unnamed streets for display)
+clean_path = []
 for name in path_names:
     if name != "Calle sin nombre" and (not clean_path or clean_path[-1] != name):
         clean_path.append(name)
 
-print(f"\n[Path found] {int(total_length)} meters\n" + " -> ".join(clean_path))
+print(f"\n[Path found] ~{int(total_length)} meters")
+print(" -> ".join(clean_path))

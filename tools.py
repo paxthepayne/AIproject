@@ -1,0 +1,234 @@
+import math
+import random
+import pandas as pd
+from difflib import SequenceMatcher
+
+# ==========================================
+# 1. GEOMETRY & SEARCH TOOLS
+# ==========================================
+
+def distance(start_coordinates, end_coordinates, type="manhattan"):
+    lat1, lon1 = start_coordinates
+    lat2, lon2 = end_coordinates
+    
+    avg_lat_rad = math.radians((lat1 + lat2) / 2)
+    lat_scale = 111132 
+    lon_scale = 111319 * math.cos(avg_lat_rad)
+    
+    dy_meters = abs(lat1 - lat2) * lat_scale
+    dx_meters = abs(lon1 - lon2) * lon_scale
+    
+    if type == "manhattan":
+        dist = dy_meters + dx_meters
+    elif type == "euclidean":
+        dist = math.sqrt(dy_meters**2 + dx_meters**2)
+        
+    return dist
+
+def find_place(streets_df, start_id=None, point_type="start"):
+    """
+    Optimized find_place with fast global search.
+    """
+    # 1. Prepare Search Space
+    search_df = streets_df
+    
+    # If we have a start location, filter aggressively by distance first
+    if start_id is not None:
+        try:
+            start_coords = streets_df.at[start_id, 'coordinates']
+            # Fast Pre-filter using Lat/Lon box (avoid calculating dist for everything)
+            lat, lon = start_coords
+            # ~2.5km box approximation
+            search_df = streets_df[
+                (streets_df['coordinates'].str[0].between(lat - 0.025, lat + 0.025)) & 
+                (streets_df['coordinates'].str[1].between(lon - 0.035, lon + 0.035))
+            ].copy()
+            
+            # Precise Distance Calculation on the smaller subset
+            search_df['dist_temp'] = search_df['coordinates'].apply(
+                lambda x: distance(start_coords, x, type="euclidean")
+            )
+            search_df = search_df[search_df['dist_temp'] <= 2000]
+        except:
+            pass # Fallback to global search if start_id is invalid
+
+    while True:
+        prompt = f"Enter {'destination (within 2km)' if start_id else 'current location'}"
+        query = input(f"\n📍 {prompt}: ").strip()
+        if not query: continue
+
+        candidates = []
+        
+        # 2. FAST SEARCH: Vectorized substring match
+        matches = search_df[search_df['name'].str.contains(query, case=False, na=False, regex=False)]
+
+        # If we found matches, score them
+        if not matches.empty:
+            for nid, row in matches.iterrows():
+                name = row['name']
+                # Base score for substring match
+                score = 1.0 if query.lower() == name.lower() else 0.8
+                
+                # Bonus for Places
+                if row['type'] in [1, 'place']: score += 0.2
+                
+                # Distance (if available)
+                dist = row['dist_temp'] if 'dist_temp' in row else 0
+                candidates.append({'name': name, 'id': nid, 'score': score, 'dist': dist})
+        
+        # 3. SLOW SEARCH (Fallback): Fuzzy matching
+        elif len(candidates) == 0:
+            print("   ...searching for similar names (typos)...")
+            
+            # Optimization: If searching globally, check PLACES first
+            if start_id is None:
+                fuzzy_pool = search_df[search_df['type'].isin([1, 'place'])]
+            else:
+                fuzzy_pool = search_df
+                
+            for nid, row in fuzzy_pool.iterrows():
+                name = str(row['name'])
+                if name == "nan" or name == "Calle Sin Nombre": continue
+                
+                ratio = SequenceMatcher(None, query.lower(), name.lower()).ratio()
+                if ratio > 0.65:
+                    score = ratio + (0.2 if row['type'] in [1, 'place'] else 0)
+                    dist = row['dist_temp'] if 'dist_temp' in row else 0
+                    candidates.append({'name': name, 'id': nid, 'score': score, 'dist': dist})
+
+        # 4. Deduplication logic
+        unique_candidates = {}
+        for c in candidates:
+            name = c['name']
+            if name not in unique_candidates:
+                unique_candidates[name] = c
+            else:
+                existing = unique_candidates[name]
+                # Prioritize: Closer Distance > Higher Score
+                is_closer = (start_id is not None and c['dist'] < existing['dist'])
+                is_better_score = (start_id is None and c['score'] > existing['score'])
+                
+                if is_closer or is_better_score:
+                    unique_candidates[name] = c
+
+        final_list = list(unique_candidates.values())
+        final_list.sort(key=lambda x: x['score'], reverse=True)
+        top_matches = final_list[:5]
+
+        if not top_matches:
+            print(f"   ❌ No matches found. Try again.")
+            continue
+
+        print(f"   🔎 Did you mean:")
+        for i, item in enumerate(top_matches, 1):
+            ntype = "Place" if streets_df.at[item['id'], 'type'] in [1, 'place'] else "Street"
+            print(f"      {i}. {item['name']} [{ntype}]")
+        
+        print("      0. None of these")
+
+        choice = input("   👉 Select option: ").strip()
+        if choice.isdigit():
+            idx = int(choice) - 1
+            if 0 <= idx < len(top_matches):
+                return top_matches[idx]['name'], top_matches[idx]['id']
+
+# ==========================================
+# 2. Q-LEARNING AGENT
+# ==========================================
+
+def calculate_reward(state, next_state, goal, streets):
+    # Basic reward structure
+    if next_state == goal: reward = 10000
+    else: reward = -1 
+    
+    # Distance calculations
+    dist_current = distance(streets.at[state, "coordinates"], streets.at[goal, "coordinates"])
+    dist_next = distance(streets.at[next_state, "coordinates"], streets.at[goal, "coordinates"])
+
+    # Bonus for moving in the right direction
+    if dist_next < dist_current:
+        reward += 1  
+    
+    return reward
+
+def choose_action(state, epsilon, Q, goal, streets):
+    # Get connections
+    next_states = streets.at[state, "connections"]
+
+    # Ensure state and actions exists in Q-table
+    if state not in Q:
+        Q[state] = {action: 0.0 for action in next_states}
+    for action in next_states:
+        if action not in Q[state]:
+            Q[state][action] = 0.0
+
+    # Epsilon-Greedy Logic
+    if random.random() < epsilon:
+        next_state = random.choice(next_states)
+    else:
+        max_q = max(Q[state][a] for a in next_states)
+        best = [a for a in next_states if Q[state][a] == max_q]
+        next_state = random.choice(best)
+
+    return next_state, calculate_reward(state, next_state, goal, streets)
+
+def train(start, goal, streets, parameters=[0.7, 0.999, 0.99, 1.0, 0.995], episodes=2000, min_delta=0.01, patience=10):
+    Q = {}
+    alpha, a_decay, gamma, epsilon, e_decay = parameters
+    
+    start_name = streets.at[start, "name"]
+    goal_name = streets.at[goal, "name"]
+    print(f"[Q-Learning] from '{start_name}' to '{goal_name}'")
+    
+    stable_episodes = 0 # Counter for convergence check
+
+    for episode in range(episodes):
+        path = [start]
+        state = start
+        steps = 0
+        max_change = 0 # Track max Q-value change this episode
+        
+        # Calculate current decays
+        curr_alpha = max(alpha * (a_decay ** episode), 0.01)
+        curr_epsilon = max(epsilon * (e_decay ** episode), 0.01)
+        
+        while state != goal and steps < 5000:
+
+            next_state, reward = choose_action(state, curr_epsilon, Q, goal, streets)
+            
+            # Ensure next state exists in Q
+            if next_state not in Q:
+                Q[next_state] = {}
+
+            # Q-Learning Formula
+            # Q(s,a) = Q(s,a) + alpha * (R + gamma * max(Q(s',a')) - Q(s,a))
+            max_next_q = max(Q[next_state].values()) if Q[next_state] else 0.0
+            current_q = Q[state].get(next_state, 0.0)
+            
+            new_q = current_q + curr_alpha * (reward + gamma * max_next_q - current_q)
+            Q[state][next_state] = new_q
+            
+            # Track change for convergence check
+            diff = abs(new_q - current_q)
+            if diff > max_change:
+                max_change = diff
+
+            # Move agent
+            path.append(next_state)
+            state = next_state
+            steps += 1
+
+        # Check for convergence
+        if max_change < min_delta: stable_episodes += 1
+        else: stable_episodes = 0
+        
+        # Stop early if converged
+        if stable_episodes >= patience:
+            print(f"-> Values converged at episode {episode} (max Δ = {min_delta}, patience = {patience})")
+            break
+
+        # Log progress periodically
+        if episode % 200 == 100 and episode != 0:
+            print(f"· Episode {episode}: {steps} steps, Δ = {max_change:.4f}")
+             
+    return path
