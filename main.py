@@ -49,7 +49,7 @@ for name in path_names:
 
 print(f"\n[Path found] {int(total_length)} meters\n" + " -> ".join(clean_path))
 
-# --------------------------------------------------------
+# just for debugging --------------------------------------------------------
 streets_df = pd.read_json("map.json").set_index("id")
 streets_list = streets_df.reset_index().to_dict(orient="records")
 
