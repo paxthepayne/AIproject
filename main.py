@@ -69,3 +69,6 @@ if __name__ == "__main__":
     print(" -> ".join(clean_path), "\n")
     print(f"[Shortest path] {int(shortest_path_length)} meters | {shortest_path_total_crowd*1000/shortest_path_length:.2f} average crowd exposure")
     print(" -> ".join(clean_shortest_path), "\n")
+
+    tools.plot_paths(city_map, path, shortest_path)
+

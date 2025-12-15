@@ -6,6 +6,8 @@ import re
 import datetime
 import unicodedata
 import requests
+import matplotlib.pyplot as plt
+
 
 
 # ==========================================
@@ -255,6 +257,53 @@ def clean(path_names):
             clean_path.append(name)
             seen.add(norm)
     return clean_path
+
+def plot_paths(city_map, path, shortest_path):
+    # Extract coordinates
+    path_coords = city_map.loc[path, "coordinates"].tolist()
+    sp_coords = city_map.loc[shortest_path, "coordinates"].tolist()
+
+    # Split lat / lon
+    path_lats, path_lons = zip(*path_coords)
+    sp_lats, sp_lons = zip(*sp_coords)
+
+    plt.figure(figsize=(10, 10))
+
+    # Crowd-aware path
+    plt.plot(
+        path_lons,
+        path_lats,
+        marker="o",
+        linewidth=2,
+        label="Crowd-aware path"
+    )
+
+    # Shortest path
+    plt.plot(
+        sp_lons,
+        sp_lats,
+        marker="o",
+        linewidth=2,
+        linestyle="--",
+        label="Shortest path"
+    )
+
+    # Start & goal
+    plt.scatter(
+        [path_lons[0], path_lons[-1]],
+        [path_lats[0], path_lats[-1]],
+        s=100,
+        zorder=5,
+        label="Start / Goal"
+    )
+
+    plt.xlabel("Longitude")
+    plt.ylabel("Latitude")
+    plt.title("Smart Crowd Router – Path Comparison")
+    plt.legend()
+    plt.grid(True)
+    plt.axis("equal")
+    plt.show()
 
 
 # ==========================================
