@@ -149,7 +149,7 @@ def find_place(streets_df, start_id=None, point_type="start"):
             pass  # Fallback to global search if start_id is invalid
 
     while True:
-        prompt = f"Enter {'destination (2km distance)' if start_id else 'your location'}"
+        prompt = f"Enter {'destination (<2km distance)' if start_id else 'your location'}"
         query = input(f"{prompt}: ").strip()
         if not query:
             continue
@@ -219,7 +219,7 @@ def find_place(streets_df, start_id=None, point_type="start"):
             continue
 
         ntype = "Place" if streets_df.at[top_matches[0]['id'], 'type'] == 1 else "Street"
-        print(f"Best match: {top_matches[0]['name']} [{ntype}]\n")
+        print(f"> Best match: {top_matches[0]['name']} [{ntype}]\n")
 
         return top_matches[0]['name'], top_matches[0]['id']
 
@@ -272,7 +272,7 @@ def estimate_crowd(streets, state, time, weather, events):
     populartimes_open = streets.at[state, "populartimes_open"]
     populartimes_closed = streets.at[state, "populartimes_closed"]
 
-    crowd = 0
+    crowd = 0.0
 
     # Weather multiplier
     weather_multiplier = 1.0
@@ -288,11 +288,11 @@ def estimate_crowd(streets, state, time, weather, events):
     if populartimes_closed is not None:
         crowd += populartimes_closed[time.weekday(), time.hour]
 
-    # Event influence (bounded and local)
-    for ev_coords in events:
-        d = distance(streets.at[state, "coordinates"], ev_coords)
-        if d < 1000:
-            crowd += 10 * (1 - d / 1000)
+    # Event influence (bounded)
+    #for ev_coords in events:
+    #    d = max(distance(streets.at[state, "coordinates"], ev_coords), 1)
+    #    if d < 500:
+    #        crowd *= 0.05/d
 
     return crowd
 
@@ -321,7 +321,10 @@ def calculate_reward(state, next_state, goal, streets, time, weather, events, sh
     if dist_next < dist_current:
         reward += 1
 
-    if not shortest_path:
+    if shortest_path:
+        edge_len = streets.at[next_state, "length"]
+        reward -= edge_len / 50
+    else:
         crowd = estimate_crowd(streets, next_state, time, weather, events)
         reward -= int(crowd)
 
@@ -363,10 +366,10 @@ def train(
     weather,
     events,
     shortest_path=False,
-    parameters=[0.7, 0.999, 0.99, 1.0, 0.995],
+    parameters=[0.5, 0.999, 1.0, 1.0, 0.995],
     episodes=2000,
     min_delta=0.01,
-    patience=20
+    patience=5
 ):
     Q = {}
     alpha, a_decay, gamma, epsilon, e_decay = parameters
@@ -425,11 +428,11 @@ def train(
         # Stop early if converged
         if stable_episodes >= patience:
             if not shortest_path:
-                print(f"-> Values converged at episode {episode}")
+                print(f"-> Values converged at episode {episode} (max Δ = {min_delta}, patience = {patience})")
             break
 
         # Log progress periodically
-        if episode % 200 == 100 and episode != 0:
+        if episode % 100 == 50 and episode != 0:
             if not shortest_path:
                 print(f"· Episode {episode}: {steps} steps, Δ = {max_change:.4f}")
 
