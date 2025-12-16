@@ -330,12 +330,13 @@ def estimate_crowd(streets, state, time, weather, events):
     elif weather == "Cloudy":
         weather_multiplier = 0.9
     elif weather == "Rainy":
-        weather_multiplier = 0.3
+        weather_multiplier = 0.2
 
     if populartimes_open is not None:
         crowd += weather_multiplier * populartimes_open[time.weekday(), time.hour]
     if populartimes_closed is not None:
-        crowd += populartimes_closed[time.weekday(), time.hour]
+        closed_weather_multiplier = 1 + 0.5 * (weather_multiplier - 1)
+        crowd += closed_weather_multiplier * populartimes_closed[time.weekday(), time.hour]
 
     # Event influence (bounded)
     #for ev_coords in events:
@@ -375,7 +376,7 @@ def calculate_reward(state, next_state, goal, streets, time, weather, events, sh
         reward -= edge_len / 50
     else:
         crowd = estimate_crowd(streets, next_state, time, weather, events)
-        reward -= int(crowd)
+        reward -= crowd
 
     return reward
 
@@ -415,8 +416,8 @@ def train(
     weather,
     events,
     shortest_path=False,
-    parameters=[0.5, 0.999, 1.0, 1.0, 0.995],
-    episodes=2000,
+    parameters=[0.5, 0.999, 1.0, 1.0, 0.999],
+    episodes=5000,
     min_delta=0.01,
     patience=5
 ):
@@ -481,7 +482,7 @@ def train(
             break
 
         # Log progress periodically
-        if episode % 100 == 50 and episode != 0:
+        if episode % 200 == 100 and episode != 0:
             if not shortest_path:
                 print(f"· Episode {episode}: {steps} steps, Δ = {max_change:.4f}")
 

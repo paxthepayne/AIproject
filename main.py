@@ -29,8 +29,12 @@ if __name__ == "__main__":
 
     # Events (As list of coordinates)
     print("Fetching city agenda...")
-    events = tools.fetch_events(current_time)["coordinates"].tolist()
-    print(f"> {len(events)} events today\n")
+    events=[]
+    try:
+        events = tools.fetch_events(current_time)["coordinates"].tolist()
+        print(f"> {len(events)} events today\n")
+    except:
+        print(f"> Could not load events\n")
 
     # Locations Selection
     start_name, start = tools.find_place(city_map, start_id=None, point_type="start")
@@ -70,5 +74,5 @@ if __name__ == "__main__":
     print(f"[Shortest path] {int(shortest_path_length)} meters | {shortest_path_total_crowd*1000/shortest_path_length:.2f} average crowd exposure")
     print(" -> ".join(clean_shortest_path), "\n")
 
-    tools.plot_paths(city_map, path, shortest_path)
+    #tools.plot_paths(city_map, path, shortest_path)
 
