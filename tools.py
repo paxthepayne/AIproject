@@ -416,7 +416,7 @@ def train(
     weather,
     events,
     shortest_path=False,
-    parameters=[0.5, 0.999, 1.0, 1.0, 0.999],
+    parameters=[0.5, 0.999, 1.0, 1.0, 0.997],
     episodes=5000,
     min_delta=0.01,
     patience=5
