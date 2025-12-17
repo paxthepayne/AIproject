@@ -123,7 +123,7 @@ def distance(start_coordinates, end_coordinates, type="manhattan"):
     return dist
 
 
-def find_place(streets_df, start_id=None, point_type="start"):
+def find_place(streets_df, start_id=None):
     """
     Optimized find_place with fast global search.
     """
@@ -310,7 +310,7 @@ def plot_paths(city_map, path, shortest_path):
 # 2. CROWD & Q-LEARNING AGENT
 # ==========================================
 
-def estimate_crowd(streets, state, time, weather, events):
+def estimate_crowd(streets, state, crowds):
     """
     Estimate crowd level for a given street node.
     Includes:
@@ -318,36 +318,20 @@ def estimate_crowd(streets, state, time, weather, events):
     - Weather impact
     - Nearby events
     """
-    populartimes_open = streets.at[state, "populartimes_open"]
-    populartimes_closed = streets.at[state, "populartimes_closed"]
+    populartimes_open = crowds.at[state, "open"]
+    populartimes_closed = crowds.at[state, "closed"]
 
     crowd = 0.0
 
-    # Weather multiplier
-    weather_multiplier = 1.0
-    if weather == "Sunny":
-        weather_multiplier = 1.3
-    elif weather == "Cloudy":
-        weather_multiplier = 0.9
-    elif weather == "Rainy":
-        weather_multiplier = 0.2
-
-    if populartimes_open is not None:
-        crowd += weather_multiplier * populartimes_open[time.weekday(), time.hour]
-    if populartimes_closed is not None:
-        closed_weather_multiplier = 1 + 0.5 * (weather_multiplier - 1)
-        crowd += closed_weather_multiplier * populartimes_closed[time.weekday(), time.hour]
-
-    # Event influence (bounded)
-    #for ev_coords in events:
-    #    d = max(distance(streets.at[state, "coordinates"], ev_coords), 1)
-    #    if d < 500:
-    #        crowd *= 0.05/d
+    if pd.notna(populartimes_open):
+        crowd += float(populartimes_open)
+    if pd.notna(populartimes_closed):
+        crowd += float(populartimes_closed)
 
     return crowd
 
 
-def calculate_reward(state, next_state, goal, streets, time, weather, events, shortest_path):
+def calculate_reward(state, next_state, goal, streets, crowds, shortest_path):
     """
     Reward function for Q-learning agent.
     """
@@ -375,16 +359,19 @@ def calculate_reward(state, next_state, goal, streets, time, weather, events, sh
         edge_len = streets.at[next_state, "length"]
         reward -= edge_len / 50
     else:
-        crowd = estimate_crowd(streets, next_state, time, weather, events)
+        crowd = estimate_crowd(streets, next_state, crowds)
         reward -= crowd
 
     return reward
 
 
-def choose_action(state, epsilon, Q, goal, streets, time, weather, events, shortest_path):
+def choose_action(state, epsilon, Q, goal, streets, crowds, shortest_path):
     # Get connections
     next_states = streets.at[state, "connections"]
 
+    if not next_states:
+        return goal, -1000
+    
     # Ensure state and actions exists in Q-table
     if state not in Q:
         Q[state] = {action: 0.0 for action in next_states}
@@ -402,7 +389,7 @@ def choose_action(state, epsilon, Q, goal, streets, time, weather, events, short
 
     reward = calculate_reward(
         state, next_state, goal,
-        streets, time, weather, events, shortest_path
+        streets, crowds, shortest_path
     )
 
     return next_state, reward
@@ -412,9 +399,7 @@ def train(
     start,
     goal,
     streets,
-    time,
-    weather,
-    events,
+    crowds,
     shortest_path=False,
     parameters=[0.5, 0.999, 1.0, 1.0, 0.997],
     episodes=5000,
@@ -445,7 +430,7 @@ def train(
 
             next_state, reward = choose_action(
                 state, curr_epsilon, Q,
-                goal, streets, time, weather, events, shortest_path
+                goal, streets, crowds, shortest_path
             )
 
             # Ensure next state exists in Q

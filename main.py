@@ -19,13 +19,25 @@ if __name__ == "__main__":
 
     # Load Map Data as DataFrame
     with open("map.pkl", "rb") as f: map_data = pickle.load(f)
-    city_map = pd.DataFrame(map_data).set_index("id").rename(columns={"coords": "coordinates","len": "length","conns": "connections","pop_open": "populartimes_open","pop_closed": "populartimes_closed"})
+    df = pd.DataFrame(map_data).set_index("id")
+
+    city_map = df.rename(columns={"coords": "coordinates", "len": "length", "conns": "connections",})[[
+        "type", "name", "coordinates", "length", "connections"]]
+    
+    populartimes = df.rename(columns={"pop_open": "populartimes_open", "pop_closed": "populartimes_closed",})[[
+        "populartimes_open", "populartimes_closed"]]
 
     # Time and Weather (Sunny/Cloudy/Rainy)
     print("Fetching weather info...")
     current_time = datetime.datetime.now()
     weather = tools.get_barcelona_weather("")
     print(f"> {current_time.strftime('%A %H:%M')}, {weather}\n")
+    
+    weekday, hour = current_time.weekday(), current_time.hour
+    weather_modifier = 1.3 if weather == "Sunny" else 0.3 if weather == "Rainy" else 0.9
+    crowd_info = pd.DataFrame(index=populartimes.index)
+    crowd_info["open"] = weather_modifier * populartimes["populartimes_open"].apply(lambda x: x[weekday, hour] if x is not None else None)
+    crowd_info["closed"] = (1 + weather_modifier)/2 * populartimes["populartimes_closed"].apply(lambda x: x[weekday, hour] if x is not None else None)
 
     # Events (As list of coordinates)
     print("Fetching city agenda...")
@@ -37,16 +49,16 @@ if __name__ == "__main__":
         print(f"> Could not load events\n")
 
     # Locations Selection
-    start_name, start = tools.find_place(city_map, start_id=None, point_type="start")
-    goal_name, goal = tools.find_place(city_map, start_id=start, point_type="goal")
+    start_name, start_id = tools.find_place(city_map, start_id=None)
+    goal_name, goal_id = tools.find_place(city_map, start_id=start_id)
 
     # Pathfinding (in parallel)
     with Pool(processes=2) as pool:
         results = pool.map(
             run_train,
             [
-                (start, goal, city_map, current_time, weather, events),
-                (start, goal, city_map, current_time, weather, events, True),  # shortest_path = True
+                (start_id, goal_id, city_map, crowd_info),
+                (start_id, goal_id, city_map, crowd_info, True),  # shortest_path = True
             ],
         )
     path, shortest_path = results
@@ -56,11 +68,11 @@ if __name__ == "__main__":
     shortest_path_length = city_map.loc[shortest_path, "length"].sum()
 
     path_total_crowd = sum(
-        tools.estimate_crowd(city_map, s, current_time, weather, events)
+        tools.estimate_crowd(city_map, s, crowd_info)
         for s in path
     )
     shortest_path_total_crowd = sum(
-        tools.estimate_crowd(city_map, s, current_time, weather, events)
+        tools.estimate_crowd(city_map, s, crowd_info)
         for s in shortest_path
     )
 
