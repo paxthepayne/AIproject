@@ -5,37 +5,74 @@ Manages data loading, user interaction, and pathfinding execution.
 
 import pandas as pd
 import datetime
-import random
-import q_learning
+import pickle
+import tools
+from multiprocessing import Pool
 
-print(f"[AI Project - Smart Crowd Router] \nBy ______________________________\n")
 
-# Load Data
-streets = pd.read_json("map.json").set_index('id')
+def run_train(args):
+    return tools.train(*args)
 
-# Environment Setup
-now = datetime.datetime.now()
-print(f"[{now.strftime('%A %H:00')} - Sunny]")
 
-# Location Selection
-named_streets = streets[streets['name'] != "Calle sin nombre"].index
+if __name__ == "__main__":
+    print(f"[AI Project - Smart Crowd Router] By Filippo Pacini, Jacopo Crispolti, Liseth Berdeja, Sieun You\n")
 
-start = random.choice(named_streets)
-print(f"· Location: {streets.at[start, 'name']} (id {start})")
+    # Load Map Data as DataFrame
+    with open("map.pkl", "rb") as f: map_data = pickle.load(f)
+    city_map = pd.DataFrame(map_data).set_index("id").rename(columns={"coords": "coordinates","len": "length","conns": "connections","pop_open": "populartimes_open","pop_closed": "populartimes_closed"})
 
-goal = random.choice(named_streets)
-print(f"· Destination: {streets.at[goal, 'name']} (id {goal})\n")
+    # Time and Weather (Sunny/Cloudy/Rainy)
+    print("Fetching weather info...")
+    current_time = datetime.datetime.now()
+    weather = tools.get_barcelona_weather("")
+    print(f"> {current_time.strftime('%A %H:%M')}, {weather}\n")
 
-# Pathfinding
-path = q_learning.train(start, goal, streets)
+    # Events (As list of coordinates)
+    print("Fetching city agenda...")
+    events=[]
+    try:
+        events = tools.fetch_events(current_time)["coordinates"].tolist()
+        print(f"> {len(events)} events today\n")
+    except:
+        print(f"> Could not load events\n")
 
-# Report Results
-total_length = streets.loc[path, "length"].sum()
-path_names = streets.loc[path, "name"].tolist()
-clean_path = []
+    # Locations Selection
+    start_name, start = tools.find_place(city_map, start_id=None, point_type="start")
+    goal_name, goal = tools.find_place(city_map, start_id=start, point_type="goal")
 
-for name in path_names:
-    if name != "Calle sin nombre" and (not clean_path or clean_path[-1] != name):
-        clean_path.append(name)
+    # Pathfinding (in parallel)
+    with Pool(processes=2) as pool:
+        results = pool.map(
+            run_train,
+            [
+                (start, goal, city_map, current_time, weather, events),
+                (start, goal, city_map, current_time, weather, events, True),  # shortest_path = True
+            ],
+        )
+    path, shortest_path = results
 
-print(f"\n[Path found] {int(total_length)} meters\n" + " -> ".join(clean_path))
+    # Report Results
+    path_length = city_map.loc[path, "length"].sum()
+    shortest_path_length = city_map.loc[shortest_path, "length"].sum()
+
+    path_total_crowd = sum(
+        tools.estimate_crowd(city_map, s, current_time, weather, events)
+        for s in path
+    )
+    shortest_path_total_crowd = sum(
+        tools.estimate_crowd(city_map, s, current_time, weather, events)
+        for s in shortest_path
+    )
+
+    path_names = city_map.loc[path, "name"].tolist()
+    shortest_path_names = city_map.loc[shortest_path, "name"].tolist()
+    clean_path = tools.clean(path_names)
+    clean_shortest_path = tools.clean(shortest_path_names)
+
+    print(f"\n[Suggested path] {int(path_length)} meters | {path_total_crowd*1000/path_length:.2f} average crowd exposure")
+    print(" -> ".join(clean_path), "\n")
+    print(f"[Shortest path] {int(shortest_path_length)} meters | {shortest_path_total_crowd*1000/shortest_path_length:.2f} average crowd exposure")
+    print(" -> ".join(clean_shortest_path), "\n")
+
+    #tools.plot_paths(city_map, path, shortest_path)
+
