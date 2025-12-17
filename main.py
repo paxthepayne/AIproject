@@ -39,15 +39,6 @@ if __name__ == "__main__":
     crowd_info["open"] = weather_modifier * populartimes["populartimes_open"].apply(lambda x: x[weekday, hour] if x is not None else None)
     crowd_info["closed"] = (1 + weather_modifier)/2 * populartimes["populartimes_closed"].apply(lambda x: x[weekday, hour] if x is not None else None)
 
-    # Events (As list of coordinates)
-    print("Fetching city agenda...")
-    events=[]
-    try:
-        events = tools.fetch_events(current_time)["coordinates"].tolist()
-        print(f"> {len(events)} events today\n")
-    except:
-        print(f"> Could not load events\n")
-
     # Locations Selection
     start_name, start_id = tools.find_place(city_map, start_id=None)
     goal_name, goal_id = tools.find_place(city_map, start_id=start_id)

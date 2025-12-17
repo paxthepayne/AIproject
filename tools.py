@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 
 
 # ==========================================
-# WEATHER & EVENTS
+# WEATHER
 # ==========================================
 
 def get_barcelona_weather(api_key):
@@ -40,65 +40,6 @@ def get_barcelona_weather(api_key):
         return "Cloudy"
     except Exception:
         return "Cloudy"
-
-
-BCN_AGENDA_URL = (
-    "https://opendata-ajuntament.barcelona.cat/data/api/action/"
-    "datastore_search?resource_id=877ccf66-9106-4ae2-be51-95a9f6469e4c&limit=15000"
-)
-
-
-def fetch_events(day):
-    """
-    Fetch events active on a given calendar day.
-
-    Parameters
-    ----------
-    day : datetime.date | datetime.datetime | str (YYYY-MM-DD)
-
-    Returns
-    -------
-    pd.DataFrame with at least:
-        - coordinates : (lat, lon)
-    """
-
-    if isinstance(day, str):
-        day = datetime.date.fromisoformat(day)
-    elif isinstance(day, datetime.datetime):
-        day = day.date()
-
-    resp = requests.get(BCN_AGENDA_URL)
-    records = resp.json()["result"]["records"]
-    df = pd.DataFrame(records)
-
-    if df.empty:
-        return pd.DataFrame(columns=["coordinates"])
-
-    lat_col = 'geo_epgs_4326_lat' if 'geo_epgs_4326_lat' in df.columns else 'lat'
-    lon_col = 'geo_epgs_4326_lon' if 'geo_epgs_4326_lon' in df.columns else 'lon'
-
-    df['lat'] = pd.to_numeric(df[lat_col], errors='coerce')
-    df['lon'] = pd.to_numeric(df[lon_col], errors='coerce')
-    df = df.dropna(subset=['lat', 'lon'])
-
-    df['start_dt'] = pd.to_datetime(df['start_date'], errors='coerce').dt.date
-
-    if 'end_date' in df.columns:
-        df['end_dt'] = pd.to_datetime(df['end_date'], errors='coerce').dt.date
-        df['end_dt'] = df['end_dt'].fillna(df['start_dt'])
-    else:
-        df['end_dt'] = df['start_dt']
-
-    df = df[
-        (df['start_dt'] <= day) &
-        (df['end_dt'] >= day)
-    ]
-
-    df = df.copy()
-    df['coordinates'] = list(zip(df['lat'], df['lon']))
-
-    return df[['coordinates']]
-
 
 # ==========================================
 # 1. GEOMETRY & SEARCH TOOLS
