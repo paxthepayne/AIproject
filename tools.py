@@ -367,7 +367,7 @@ def train(
         curr_alpha = max(alpha * (a_decay ** episode), 0.01)
         curr_epsilon = max(epsilon * (e_decay ** episode), 0.01)
 
-        while state != goal and steps < 5000:
+        while state != goal and steps < 3000:
 
             next_state, reward = choose_action(
                 state, curr_epsilon, Q,
@@ -408,7 +408,7 @@ def train(
             break
 
         # Log progress periodically
-        if episode % 200 == 100 and episode != 0:
+        if episode in [10, 20, 50, 100, 200, 500, 1000, 1500, 2000, 3000, 4000, 5000]:
             if not shortest_path:
                 print(f"· Episode {episode}: {steps} steps, Δ = {max_change:.4f}")
 
