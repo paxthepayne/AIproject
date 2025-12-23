@@ -1,6 +1,7 @@
 # Data Handling
 import gzip
 import json
+import numpy as np
 import pandas as pd
 import geopandas as gpd
 import osmnx as ox
@@ -43,7 +44,7 @@ if __name__ == "__main__":
     pois["geometry"] = pois.to_crs(epsg=3857).geometry.centroid.to_crs(epsg=4326)
 
     # Initialize DataFrame and filter invalid entries
-    places_df = pd.DataFrame({"name": pois["name"], "lat": pois.geometry.y, "lon": pois.geometry.x, "is_open": None, "popular_times": None})
+    places_df = pd.DataFrame({"name": pois["name"], "lat": pois.geometry.y, "lon": pois.geometry.x, "is_open": False, "popular_times": None})
     places_df = places_df.dropna(subset=["name", "lat", "lon"])
     places_df = places_df[places_df["name"].str.strip() != ""]
 
@@ -72,7 +73,7 @@ if __name__ == "__main__":
             lat = details.get('coordinates', {}).get('lat', lat)
             lon = details.get('coordinates', {}).get('lng', lon)
             is_open = any(t in open_types for t in details.get('types', [])) 
-            popular_times = [d["data"] for d in details["populartimes"]] if details.get("populartimes") else None
+            popular_times = (np.array([d["data"] for d in details["populartimes"]]) if details.get("populartimes") else None)
 
             return i, google_name, lat, lon, is_open, popular_times
         except Exception:
@@ -93,15 +94,17 @@ if __name__ == "__main__":
 
     # Update DataFrame with enriched data
     for i, google_name, lat, lon, is_open, popular_times in updates:
-        places_df.at[i, 'name'] = google_name
-        places_df.at[i, 'lat'] = lat
-        places_df.at[i, 'lon'] = lon
-        places_df.at[i, 'is_open'] = is_open
+        if google_name is not None:
+            places_df.at[i, 'name'] = google_name
+        if lat is not None and lon is not None:
+            places_df.at[i, 'lat'] = lat
+            places_df.at[i, 'lon'] = lon
+        places_df.at[i, 'is_open'] = bool(is_open)
         places_df.at[i, 'popular_times'] = popular_times
 
 
     # Remove entries that couldn't be enriched
-    places_df = places_df[places_df['name'].notnull() & places_df['is_open'].notnull() & places_df['popular_times'].notnull()]
+    places_df = places_df[places_df['name'].notnull()]
 
 
 # Build Street Network and Integrate POIs --------------------------------------------------------------------
@@ -172,11 +175,12 @@ if __name__ == "__main__":
         final_nodes[parent_sid]['conns'].append(pid)
 
         target_key = 'pop_open' if is_open else 'pop_closed'
-        final_nodes[parent_sid][target_key] = (
-            popular_times.copy()
-            if final_nodes[parent_sid][target_key] is None
-            else final_nodes[parent_sid][target_key] + popular_times
-        )
+        if popular_times is not None:
+            if final_nodes[parent_sid][target_key] is None:
+                final_nodes[parent_sid][target_key] = popular_times.copy()
+            else:
+                final_nodes[parent_sid][target_key] += popular_times
+
 
 
 # Export Final Map (JSON + Gzip) -----------------------------------------------------------------------------
@@ -186,7 +190,10 @@ if __name__ == "__main__":
     def convert_sets(obj):
         if isinstance(obj, set):
             return list(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
         raise TypeError
+
 
     with gzip.open(f"{OUTPUT_FILE}", "wt", encoding="UTF-8") as f:
         json.dump(list(final_nodes.values()), f, default=convert_sets)
