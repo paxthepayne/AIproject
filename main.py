@@ -3,9 +3,9 @@ Main execution script for Smart Crowd Router.
 Manages data loading, user interaction, and pathfinding execution.
 """
 
+import json
 import pandas as pd
 import datetime
-import pickle
 import tools
 from multiprocessing import Pool
 
@@ -18,7 +18,7 @@ if __name__ == "__main__":
     print(f"[AI Project - Smart Crowd Router] By Filippo Pacini, Jacopo Crispolti, Liseth Berdeja, Sieun You\n")
 
     # Load Map Data as DataFrame
-    with open("map.pkl", "rb") as f: map_data = pickle.load(f)
+    with open("map.json.gz", "rt") as f: map_data = json.load(f)
     df = pd.DataFrame(map_data).set_index("id")
 
     city_map = df.rename(columns={"coords": "coordinates", "len": "length", "conns": "connections",})[[

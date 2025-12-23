@@ -3,7 +3,6 @@ import random
 import pandas as pd
 from difflib import SequenceMatcher
 import re
-import datetime
 import unicodedata
 import requests
 import matplotlib.pyplot as plt
