@@ -17,7 +17,7 @@ from tqdm import tqdm
 # Configuration
 TARGET_LOCATION = "Barcelona, Spain"
 OUTPUT_FILE = "map.json.gz"
-GOOGLE_API_KEY = "AIzaSyBm4v8ILO0scGAlaTASr-B5VeWmXL7Udjs"
+GOOGLE_API_KEY = ""
 
 if __name__ == "__main__":
     if GOOGLE_API_KEY == "": raise ValueError("No Google Cloud API key found.")
