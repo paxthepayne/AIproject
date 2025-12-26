@@ -1,17 +1,26 @@
+'''
+Fetches Points of Interest from OpenData Barcelona and OpenStreetMap,
+enriches them with Google data (standard name, type, popular times), 
+builds a street network (OpenStreetMap), integrates POIs into the network, 
+and exports the final map as a compressed JSON file.
+'''
+
 # Data Handling
 import gzip
 import json
 import numpy as np
 import pandas as pd
 import geopandas as gpd
+import requests
+
+# OpenStreetMap
 import osmnx as ox
-from shapely.geometry import Point
 
 # Google Services
 import googlemaps
 import populartimes
 
-# Multithreading and Progress Bar
+# Multithreading and Progress Bar 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
@@ -20,21 +29,28 @@ TARGET_LOCATION = "Barcelona, Spain"
 OUTPUT_FILE = "map.json.gz"
 GOOGLE_API_KEY = ""
 
+
 if __name__ == "__main__":
-    if GOOGLE_API_KEY == "": raise ValueError("No Google Cloud API key found.")
 
-# Fetch POIs from OpenStreetMap ------------------------------------------------------------------------------
-    print(f"Fetching 'Points of Interest' Data for {TARGET_LOCATION} (OpenStreetMap)")
+# Fetch POIs -------------------------------------------------------------------------------------------------
+    print(f"Fetching 'Points of Interest' Data for {TARGET_LOCATION}... (OpenData BCN, OpenStreetMap)")
 
-    # Desired venue types
-    TAGS = {
-        "amenity": ["bar", "cafe", "restaurant", "pub", "fast_food", "marketplace", "nightclub", "cinema", "theatre", "place_of_worship", "hospital", "university", "school"],
-        "tourism": ["attraction", "museum", "gallery", "zoo", "theme_park", "viewpoint"], "leisure": ["park", "stadium", "sports_centre", "beach_resort"],
-        "natural": ["beach"], "shop": ["mall"], "historic": True, "public_transport": ["station", "platform"], "railway": ["station", "subway_entrance"]
-    }
+    # Load POIs (OpenData Barcelona)
+    POIs = pd.DataFrame(requests.get(
+        "https://opendata-ajuntament.barcelona.cat/data/api/action/datastore_search?resource_id=31431b23-d5b9-42b8-bcd0-a84da9d8c7fa&limit=32000"
+    ).json()["result"]["records"])
 
-    # Load POIs
-    pois = ox.features_from_place(TARGET_LOCATION, tags=TAGS)
+    # Build DataFrame from OpenData BCN
+    df_bcn = pd.DataFrame({
+        "name": POIs["name"],
+        "lat": pd.to_numeric(POIs["geo_epgs_4326_lat"], errors="coerce"),
+        "lon": pd.to_numeric(POIs["geo_epgs_4326_lon"], errors="coerce"),
+        "is_open": False,
+        "popular_times": [np.zeros((7, 24), dtype=int).tolist() for _ in range(len(POIs))]
+    })
+
+    # Load POIs (OpenStreetMap)
+    pois = ox.features_from_place(TARGET_LOCATION, tags={"amenity": ["cinema", "theatre", "place_of_worship", "hospital", "university"], "tourism": ["attraction", "museum", "theme_park", "viewpoint"], "shop": ["mall"]})
     pois = pois.reset_index(drop=True)
 
     # Filter malformed geometries
@@ -43,80 +59,86 @@ if __name__ == "__main__":
     # Calculate coordinates (project to metric system and back to degrees)
     pois["geometry"] = pois.to_crs(epsg=3857).geometry.centroid.to_crs(epsg=4326)
 
-    # Initialize DataFrame and filter invalid entries
-    places_df = pd.DataFrame({"name": pois["name"], "lat": pois.geometry.y, "lon": pois.geometry.x, "is_open": False, "popular_times": None})
-    places_df = places_df.dropna(subset=["name", "lat", "lon"])
-    places_df = places_df[places_df["name"].str.strip() != ""]
+    # Build DataFrame from OSM
+    df_osm = pd.DataFrame({
+        "name": pois["name"],
+        "lat": pois.geometry.y,
+        "lon": pois.geometry.x,
+        "is_open": False,
+        "popular_times": [np.zeros((7, 24), dtype=int).tolist() for _ in range(len(pois))]
+    })
+
+    # Merge the two datasets
+    places_df = pd.concat([df_osm, df_bcn], ignore_index=True)
+
+    # Remove entries with no name
+    places_df = places_df[places_df["name"].notna() & (places_df["name"].str.strip() != "")]
+
+    # Filter points with wrong coordinates 
+    places_df = places_df.dropna(subset=['lat','lon']).reset_index(drop=True)
+    places_df = places_df[(places_df.lat.between(41.0, 42.0)) & (places_df.lon.between(1.5, 2.5))].copy()
+    places_df = places_df.reset_index(drop=True)
 
 
 # Enrich POIs with Google Places Data ------------------------------------------------------------------------
     gmaps = googlemaps.Client(key=GOOGLE_API_KEY)
 
-    def enrich_place(query):
-        """
-        Enrich a single place with Google Maps data.
-        Returns: (index, google_name, lat, lon, is_open, popular_times)
-        """
-        open_types = ['park', 'cemetery', 'town_square', 'tourist_attraction', 'stadium', 'amusement_park', 'zoo', 'natural_feature', 'point_of_interest', 'neighborhood', 'route', 'street_address', 'transit_station', 'bus_station', 'train_station', 'subway_station']
-        i, osm_name, lat, lon = query
+    def enrich_place(task):
+        i, name, lat, lon = task
+        open_types = {'park', 'cemetery', 'town_square', 'tourist_attraction', 'stadium', 'amusement_park', 'zoo', 'natural_feature', 'point_of_interest', 'neighborhood', 'route', 'street_address', 'transit_station', 'bus_station', 'train_station', 'subway_station'}
         try:
-            # Search place by name and get its Google id
-            results = gmaps.find_place(input=osm_name, input_type="textquery", location_bias=f"circle:200@{lat},{lon}", fields=['place_id'])
-            if not results['candidates']: 
-                return i, None, None, None, None, None
-            place_id = results['candidates'][0]['place_id']
+            find = gmaps.find_place(f"{name}, Barcelona", "textquery", location_bias=f"point:{lat},{lon}")
+            if not find.get('candidates'):
+                return i, None, None, None
+            place = find['candidates'][0]
+            google_id = place['place_id']
 
-            # Fetch place details with populartimes
-            details = populartimes.get_id(GOOGLE_API_KEY, place_id)
+            details = gmaps.place(google_id, fields=['name', 'type'])
+            google_name = details.get('result', {}).get('name')
+            is_open = bool(set(details.get("types", [])) & open_types)
+            
+            pt = populartimes.get_id(GOOGLE_API_KEY, google_id)
+            popular_times = np.array([d['data'] for d in pt.get('populartimes', [])])
 
-            google_name = details.get('name')
-            lat = details.get('coordinates', {}).get('lat', lat)
-            lon = details.get('coordinates', {}).get('lng', lon)
-            is_open = any(t in open_types for t in details.get('types', [])) 
-            popular_times = (np.array([d["data"] for d in details["populartimes"]]) if details.get("populartimes") else None)
+            return i, google_name, is_open, popular_times
 
-            return i, google_name, lat, lon, is_open, popular_times
-        except Exception:
-            return i, None, None, None, None, None
+        except Exception as e:
+            print(e)
+            return i, None, None, None
+
         
-    # Concurrent enrichment of places
-    places = [(i, row['name'], row['lat'], row['lon']) for i, row in places_df.iterrows()]
+    # Enrich places
+    tasks = [(i, row['name'], row['lat'], row['lon']) for i, row in places_df.iterrows()]
     with ThreadPoolExecutor(max_workers=10) as executor:
-        results = [executor.submit(enrich_place, p) for p in places]
-        
-        # Collect results as they complete (tqdm for progress bar)
-        updates = []
-        pbar = tqdm(total=len(results), desc="Enriching POIs with Google Data")
-        for fut in as_completed(results):
-            updates.append(fut.result())
-            pbar.update(1)
-        pbar.close()
+        futures = [executor.submit(enrich_place, t) for t in tasks]
 
-    # Update DataFrame with enriched data
-    for i, google_name, lat, lon, is_open, popular_times in updates:
-        if google_name is not None:
-            places_df.at[i, 'name'] = google_name
-        if lat is not None and lon is not None:
-            places_df.at[i, 'lat'] = lat
-            places_df.at[i, 'lon'] = lon
-        places_df.at[i, 'is_open'] = bool(is_open)
-        places_df.at[i, 'popular_times'] = popular_times
+        for future in tqdm(as_completed(futures), total=len(futures), desc="> Enriching Places with Google Data"):
+            i, google_name, is_open, popular_times = future.result()
 
+            if google_name is not None:
+                places_df.at[i, 'name'] = google_name
+            places_df.at[i, 'is_open'] = bool(is_open)
+            if popular_times.sum() != 0:
+                places_df.at[i, 'popular_times'] = popular_times
+                print(f"> Enriched Place: {places_df.at[i, 'name']}")
 
+                
+
+    
     # Remove entries that couldn't be enriched
     places_df = places_df[places_df['name'].notnull()]
 
 
 # Build Street Network and Integrate POIs --------------------------------------------------------------------
-    print(f"Building Street Network for {TARGET_LOCATION} (OpenStreetMap)")
+    print(f"\nBuilding Street Network for {TARGET_LOCATION}... (OpenStreetMap)")
 
     # Load walkable street network
     network = ox.project_graph(ox.graph_from_place(TARGET_LOCATION, network_type='walk'))
 
     # Map POIs to nearest street edges
-    places_gdf = gpd.GeoDataFrame(places_df, geometry=[Point(xy) for xy in zip(places_df.lon, places_df.lat)], crs="EPSG:4326").to_crs(network.graph['crs'])
-    nearest_edges = ox.nearest_edges(network, places_gdf.geometry.x, places_gdf.geometry.y)
-    places_df['street_edge'] = list(nearest_edges)
+    places_gdf = gpd.GeoDataFrame(places_df, geometry=gpd.points_from_xy(places_df.lon, places_df.lat), crs="EPSG:4326").to_crs(network.graph['crs'])
+    nearest_edges = ox.nearest_edges(network, places_gdf.geometry.x, places_gdf.geometry.y, return_dist=False)
+    places_df['street_edge'] = nearest_edges
 
     # Assign unique ids to street segments and get coordinates (centroids)
     _, streets = ox.graph_to_gdfs(network)
@@ -175,27 +197,60 @@ if __name__ == "__main__":
         final_nodes[parent_sid]['conns'].append(pid)
 
         target_key = 'pop_open' if is_open else 'pop_closed'
+        
         if popular_times is not None:
+            current_pop = np.array(popular_times)
             if final_nodes[parent_sid][target_key] is None:
-                final_nodes[parent_sid][target_key] = popular_times.copy()
+                final_nodes[parent_sid][target_key] = current_pop.tolist()
             else:
-                final_nodes[parent_sid][target_key] += popular_times
-
+                existing_raw = final_nodes[parent_sid][target_key]
+                if existing_raw is None or len(existing_raw) == 0:
+                    final_nodes[parent_sid][target_key] = current_pop.tolist()
+                else:
+                    existing = np.array(existing_raw)
+                    final_nodes[parent_sid][target_key] = (existing + current_pop).tolist()
 
 
 # Export Final Map (JSON + Gzip) -----------------------------------------------------------------------------
-    print(f"Exporting to '{OUTPUT_FILE}'")
+    print(f"\nExporting to '{OUTPUT_FILE}'...")
 
-    # Convert complex types to Lists so JSON can handle them
     def convert_sets(obj):
+        '''
+            Convert complex types to Lists so JSON can handle them
+        '''
         if isinstance(obj, set):
             return list(obj)
         if isinstance(obj, np.ndarray):
             return obj.tolist()
         raise TypeError
 
-
+    # Export final nodes to compressed JSON
     with gzip.open(f"{OUTPUT_FILE}", "wt", encoding="UTF-8") as f:
         json.dump(list(final_nodes.values()), f, default=convert_sets)
 
     print(f"> final map built with {len(final_nodes)} nodes.")
+
+
+# SOME STATS -------------------------------------------------------------------------------------------------
+    total_pois = len(places_df)
+    pois_with_pop = places_df["popular_times"].notnull().sum()
+    pois_without_pop = total_pois - pois_with_pop
+    open_pois_with_pop = places_df[(places_df["is_open"] == True) & (places_df["popular_times"].notnull())].shape[0]
+    closed_pois_with_pop = places_df[(places_df["is_open"] == False) & (places_df["popular_times"].notnull())].shape[0]
+
+    print(f"\nTotal places: {total_pois}")
+    print(f"Places with crowd data: {pois_with_pop}")
+    print(f" ├─ Open: {open_pois_with_pop}")
+    print(f" └─ Closed: {closed_pois_with_pop}")
+
+    street_nodes = [n for n in final_nodes.values() if n["type"] == 0]
+    total_streets = len(street_nodes)
+    streets_with_crowd = sum((n["pop_open"] is not None) or (n["pop_closed"] is not None) for n in street_nodes)
+    streets_with_open_crowd = sum(n["pop_open"] is not None for n in street_nodes)
+    streets_with_closed_crowd = sum(n["pop_closed"] is not None for n in street_nodes)
+
+    print(f"\nTotal streets: {total_streets}")
+    print(f"Streets with crowd data: {streets_with_crowd}")
+    print(f" ├─ Open: {streets_with_open_crowd}")
+    print(f" └─ Closed: {streets_with_closed_crowd}")
+

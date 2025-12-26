@@ -3,6 +3,7 @@ Main execution script for Smart Crowd Router.
 Manages data loading, user interaction, and pathfinding execution.
 """
 
+import gzip
 import json
 import pandas as pd
 import datetime
@@ -18,8 +19,8 @@ if __name__ == "__main__":
     print(f"[AI Project - Smart Crowd Router] By Filippo Pacini, Jacopo Crispolti, Liseth Berdeja, Sieun You\n")
 
     # Load Map Data as DataFrame
-    with open("map.json.gz", "rt") as f: map_data = json.load(f)
-    df = pd.DataFrame(map_data).set_index("id")
+    with gzip.open("map.json.gz", "rt", encoding="utf-8") as f: data = json.load(f)
+    df = pd.DataFrame(data).set_index("id")
 
     city_map = df.rename(columns={"coords": "coordinates", "len": "length", "conns": "connections",})[[
         "type", "name", "coordinates", "length", "connections"]]
@@ -36,8 +37,8 @@ if __name__ == "__main__":
     weekday, hour = current_time.weekday(), current_time.hour
     weather_modifier = 1.3 if weather == "Sunny" else 0.3 if weather == "Rainy" else 0.9
     crowd_info = pd.DataFrame(index=populartimes.index)
-    crowd_info["open"] = weather_modifier * populartimes["populartimes_open"].apply(lambda x: x[weekday, hour] if x is not None else None)
-    crowd_info["closed"] = (1 + weather_modifier)/2 * populartimes["populartimes_closed"].apply(lambda x: x[weekday, hour] if x is not None else None)
+    crowd_info["open"] = weather_modifier * populartimes["populartimes_open"].apply(lambda x: x[weekday][hour] if x is not None else 0.0)
+    crowd_info["closed"] = (1 + weather_modifier)/2 * populartimes["populartimes_closed"].apply(lambda x: x[weekday][hour] if x is not None else 0.0)
 
     # Locations Selection
     start_name, start_id = tools.find_place(city_map, start_id=None)
