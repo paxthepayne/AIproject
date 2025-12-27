@@ -1,5 +1,5 @@
 """
-Map Builder 
+Map Builder
 
 - If map.json.gz exists -> do nothing
 - Else:
@@ -10,192 +10,233 @@ Map Builder
     • Export map.json.gz
 """
 
-# IMPORTS AND CONFIGURATION
+# --- IMPORTS ---
 
-# system
-import os, json, gzip
+# System
+import os
+import json
+import gzip
 
-# data handling
-import numpy as np, pandas as pd, geopandas as gpd
+# Data Handling
+import numpy as np
+import pandas as pd
+import geopandas as gpd
 
-# external APIs
+# APIs
 import requests
-import osmnx as ox, googlemaps, populartimes
+import googlemaps
+import populartimes
+import osmnx as ox
 
-# multithreading and progress bar
+# Progress Bar and Multithreading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
+
+
+# --- CONFIGURATION ---
 
 TARGET_LOCATION = "Barcelona, Spain"
 OUTPUT_FILE = "map.json.gz"
 GOOGLE_API_KEY = ""
 
+# OpenData BCN Resource
+BCN_API_URL = (
+    "https://opendata-ajuntament.barcelona.cat/data/api/action/datastore_search?"
+    "resource_id=31431b23-d5b9-42b8-bcd0-a84da9d8c7fa&limit=32000"
+)
 
-# MAP BUILDER
+
+# --- MAP BUILDER ---
 
 def build_map():
-    print("> Fetching POIs from OpenData BCN")
+    print("> Fetching POIs from OpenData BCN...")
     
-    # Fetch POIs from OpenData BCN
-    pois = pd.DataFrame(requests.get(
-        "https://opendata-ajuntament.barcelona.cat/data/api/action/"
-        "datastore_search?resource_id=31431b23-d5b9-42b8-bcd0-a84da9d8c7fa&limit=32000"
-        ).json()["result"]["records"])
+    # Load Raw Data
+    data = requests.get(BCN_API_URL).json()["result"]["records"]
+    pois = pd.DataFrame(data)
 
-    # Initialize places DataFrame
+    # Clean Data
     places = pd.DataFrame({
         "name": pois["name"],
         "lat": pd.to_numeric(pois["geo_epgs_4326_lat"], errors="coerce"),
         "lon": pd.to_numeric(pois["geo_epgs_4326_lon"], errors="coerce"),
-        "popular_times": None,
+        "popular_times": None
     })
-
-    # Drop invalid entries
+    
+    # Drop rows with missing values
     places = places.dropna(subset=["name", "lat", "lon"]).reset_index(drop=True)
 
 
-    print("> Enriching POIs with Google popular times")
+    print("> Enriching POIs with Google popular times...")
     
-    # Google Maps client
+    # Initialize Google Maps Client
     gmaps = googlemaps.Client(key=GOOGLE_API_KEY)
 
-    def enrich_place(i, name, lat, lon):
+    def fetch_popular_times(index, name, lat, lon):
+        """Helper to fetch popular times for a single row."""
         try:
             # Find place Google ID
             res = gmaps.find_place(name, "textquery", location_bias=f"circle:200@{lat},{lon}", fields=["place_id"])
             if not res["candidates"]:
-                return i, None
+                return index, None
+            
             google_id = res["candidates"][0]["place_id"]
             
-            # Fetch popular times
-            pop = populartimes.get_id(GOOGLE_API_KEY, google_id).get("populartimes")
-            if not pop:
-                return i, None
+            # Fetch populartimes data
+            pop_data = populartimes.get_id(GOOGLE_API_KEY, google_id).get("populartimes")
+            if not pop_data:
+                return index, None
 
-            # Transform populartimes to array
-            popular_times = np.array([d["data"] for d in pop], dtype=float)
+            # Convert to 7x24 numpy array
+            popular_times = np.array([d["data"] for d in pop_data], dtype=float)
+            
             if popular_times.shape != (7, 24):
-                return i, None
+                return index, None
 
-            return i, popular_times
+            return index, popular_times
+            
         except Exception:
-            return i, None
+            # Fail silently for individual items
+            return index, None
 
-    # Enrich places in parallel
+    # Multithreaded enrichment of places
     tasks = [(i, r["name"], r["lat"], r["lon"]) for i, r in places.iterrows()]
-    with ThreadPoolExecutor(max_workers=10) as ex:
-        results = [ex.submit(enrich_place, *t) for t in tasks]
-        for r in tqdm(as_completed(results), total=len(results)):
-            i, popular_times = r.result()
-            if popular_times is not None: places.at[i, "popular_times"] = popular_times
+    
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(fetch_popular_times, *t) for t in tasks]
+        
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Enriching"):
+            i, result = future.result()
+            if result is not None:
+                places.at[i, "popular_times"] = result
 
-    print(f"> POIs with crowd data: {(places['popular_times'].notna()).sum()}")
+    count_enriched = places['popular_times'].notna().sum()
+    print(f"> POIs enriched with crowd data: {count_enriched}")
 
 
-    print("> Building OpenStreetMap walking network")
+    print("> Building OpenStreetMap walking network...")
 
-    # Build street network from OpenStreetMap (as GeoDataFrame)
-    G = ox.project_graph(ox.graph_from_place(TARGET_LOCATION, network_type="walk"))
+    # Download graph and project to metric system
+    G = ox.graph_from_place(TARGET_LOCATION, network_type="walk")
+    G = ox.project_graph(G)
+    
+    # Convert streets to a GeoDataFrame
     _, streets = ox.graph_to_gdfs(G)
     streets = streets.reset_index()
-    streets["id"] = range(len(streets))
+    streets["id"] = range(len(streets)) # Assign unique ID to every street segment
 
-    # Compute street center points
+    # Calculate centroids for the middle point of the street
     centroids = streets.centroid.to_crs("EPSG:4326")
     streets["center"] = list(zip(centroids.y, centroids.x))
 
-    # Create a street neighbor lookup
-    street_lookup = streets.set_index(["u", "v", "key"])["id"].to_dict()
+    # Create Neighbors Map: Node ID (intersection) -> Set of Street IDs
     adj = {}
-    for sid, u, v in streets[["id", "u", "v"]].itertuples(index=False):
-        adj.setdefault(u, set()).add(sid)
-        adj.setdefault(v, set()).add(sid)
+    for street_id, u, v in streets[["id", "u", "v"]].itertuples(index=False):
+        adj.setdefault(u, set()).add(street_id)
+        adj.setdefault(v, set()).add(street_id)
+    street_lookup = streets.set_index(["u", "v", "key"])["id"].to_dict()
 
 
-    print("> Linking POIs to streets")
+    print("> Linking POIs to nearest streets...")
 
-    # Find nearest street for each place
-    gdf = gpd.GeoDataFrame(places, geometry=gpd.points_from_xy(places.lon, places.lat), crs="EPSG:4326").to_crs(G.graph["crs"])
-    places["street_edge"] = ox.nearest_edges(G, gdf.geometry.x, gdf.geometry.y, return_dist=False)
-
-
-    print("> Building final nodes")
+    # Convert POIs to GeoDataFrame and project to same CRS as the streets
+    gdf_places = gpd.GeoDataFrame(
+        places, 
+        geometry=gpd.points_from_xy(places.lon, places.lat), 
+        crs="EPSG:4326"
+    ).to_crs(G.graph["crs"])
     
-    # Combine streets and POIs into final nodes
+    # Find nearest street edge for every POI
+    places["street_edge"] = ox.nearest_edges(
+        G, gdf_places.geometry.x, gdf_places.geometry.y, return_dist=False
+    )
+
+
+    print("> Aggregating final JSON structure...")
+    
     nodes = {}
 
-    # Streets
-    for sid, u, v, name, center, length in streets[
-        ["id", "u", "v", "name", "center", "length"]
-    ].itertuples(index=False):
+    # Process Streets (Type 0)
 
-        safe_name = (
-            name[0] if isinstance(name, list) and name
-            else name if isinstance(name, str)
-            else "Calle Sin Nombre"
-        )
+    for row in streets.itertuples(index=False):
+        # Handle OSM names
+        street_name = row.name
+        if isinstance(street_name, list) and street_name:
+            safe_name = street_name[0]
+        elif isinstance(street_name, str):
+            safe_name = street_name
+        else:
+            safe_name = "Calle Sin Nombre"
 
-        nodes[sid] = {
-            "id": sid,
-            "type": 0,
+        # Find connected streets (neighbors)
+        neighbors = list((adj[row.u] | adj[row.v]) - {row.id})
+
+        nodes[row.id] = {
+            "id": row.id,
+            "type": 0,  # 0 = Street
             "name": safe_name,
-            "coords": center,
-            "len": float(length or 0),
-            "conns": list((adj[u] | adj[v]) - {sid}),
-            "popular_times": None,
+            "coords": row.center,
+            "len": float(row.length or 0),
+            "conns": neighbors,
+            "popular_times": None, # Will be aggregated from POIs
         }
 
-    # POIs
+    # Process POIs (Type 1)
     next_id = len(nodes)
 
     for _, r in places.iterrows():
-        parent = street_lookup.get(r["street_edge"])
-        if parent is None:
+        parent_id = street_lookup.get(r["street_edge"])
+        
+        # If POI didn't snap to a valid street, skip
+        if parent_id is None:
             continue
 
         pid = next_id
         next_id += 1
+        
+        p_times = r["popular_times"]
 
-        popular_times = r["popular_times"]
-
+        # Create POI Node
         nodes[pid] = {
             "id": pid,
-            "type": 1,
+            "type": 1,  # 1 = POI
             "name": r["name"],
             "coords": (r["lat"], r["lon"]),
             "len": 0,
-            "conns": [parent],
-            "popular_times": popular_times.tolist() if popular_times is not None else None,
+            "conns": [parent_id], # Connects only to its parent street
+            "popular_times": p_times.tolist() if p_times is not None else None,
         }
 
-        nodes[parent]["conns"].append(pid)
+        # Add POI to parent's connections
+        nodes[parent_id]["conns"].append(pid)
 
-        if popular_times is not None:
-            existing = nodes[parent]["popular_times"]
+        # Aggregate Popular Times up to the Street
+        if p_times is not None:
+            existing = nodes[parent_id]["popular_times"]
+            
             if existing is None:
-                nodes[parent]["popular_times"] = popular_times.tolist()
+                nodes[parent_id]["popular_times"] = p_times.tolist()
             else:
-                a = np.array(existing)
-                if a.shape == popular_times.shape == (7, 24):
-                    nodes[parent]["popular_times"] = (a + popular_times).tolist()
+                current_arr = np.array(existing)
+                if current_arr.shape == p_times.shape:
+                    nodes[parent_id]["popular_times"] = (current_arr + p_times).tolist()
 
 
-    print("> Saving map.json.gz")
+    print(f"> Saving {OUTPUT_FILE}...")
 
-    # Export to JSON.gz
     with gzip.open(OUTPUT_FILE, "wt", encoding="utf-8") as f:
         json.dump(list(nodes.values()), f)
 
-    print(f"> Map built with {len(nodes)} nodes")
+    print(f"> Map built successfully with {len(nodes)} total nodes.")
 
 
-# RUN MAP BUILDER ONLY IF IT DOESN'T EXIST
+# --- MAIN EXECUTION ---
 
 if __name__ == "__main__":
-
     if os.path.exists(OUTPUT_FILE):
         print(f"> '{OUTPUT_FILE}' already exists.")
     else:
-        if GOOGLE_API_KEY == "":
-            raise ValueError("GOOGLE_API_KEY not set")
+        if not GOOGLE_API_KEY:
+            raise ValueError("GOOGLE_API_KEY is not set.")
+        
         build_map()
