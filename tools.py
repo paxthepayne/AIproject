@@ -3,7 +3,6 @@ import random
 import pandas as pd
 from difflib import SequenceMatcher
 import re
-import datetime
 import unicodedata
 import requests
 import matplotlib.pyplot as plt
@@ -259,15 +258,12 @@ def estimate_crowd(streets, state, crowds):
     - Weather impact
     - Nearby events
     """
-    populartimes_open = crowds.at[state, "open"]
-    populartimes_closed = crowds.at[state, "closed"]
+    crowds = crowds[state]
 
     crowd = 0.0
 
-    if pd.notna(populartimes_open):
-        crowd += float(populartimes_open)
-    if pd.notna(populartimes_closed):
-        crowd += float(populartimes_closed)
+    if pd.notna(crowds):
+        crowd += float(crowds)
 
     return crowd
 
