@@ -62,7 +62,7 @@ if __name__ == "__main__":
                 (start_id, goal_id, city_map, current_crowds, True),  # shortest_path = True
             ],
         )
-    path, shortest_path = results
+    (path, Q), (shortest_path, _) = results
 
     # Report Results
     path_length = city_map.loc[path, "length"].sum()
@@ -87,4 +87,13 @@ if __name__ == "__main__":
     print(f"[Shortest path] {int(shortest_path_length)} meters | {shortest_path_total_crowd*1000/shortest_path_length:.2f} average crowd exposure")
     print(" -> ".join(clean_shortest_path), "\n")
 
+    choice = input("Enter navigation mode? (y/n): ").strip().lower()
+    if choice == "y":
+        tools.navigation_mode(
+            start_id,
+            goal_id,
+            city_map,
+            current_crowds,
+            Q
+        )
 

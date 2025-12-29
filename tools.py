@@ -3,10 +3,13 @@
 import math
 import random
 import pandas as pd
-from difflib import SequenceMatcher
+import pandas as pd
+from unidecode import unidecode
+from rapidfuzz import process, fuzz
 import re
 import unicodedata
 import requests
+from collections import defaultdict
 
 
 # --- WEATHER ---
@@ -66,105 +69,110 @@ def distance(start_coordinates, end_coordinates, type="manhattan"):
 
 def find_place(streets_df, start_id=None):
     """
-    Optimized find_place with fast global search.
+    Optimized place search using vectorization and smart fuzzy matching.
     """
-    # 1. Prepare Search Space
+    # --- 1. PRE-COMPUTATION (Do this once) ---
+    # Create a normalized column for fast vector search (lowercase + no accents)
+    # We use unidecode to turn "Família" -> "familia"
+    if 'name_clean' not in streets_df.columns:
+        streets_df['name_clean'] = streets_df['name'].apply(lambda x: unidecode(str(x)).lower())
+
     search_df = streets_df
 
-    # If we have a start location, filter aggressively by distance first
+    # --- 2. GEOGRAPHIC FILTER (If start location exists) ---
     if start_id is not None:
         try:
             start_coords = streets_df.at[start_id, 'coordinates']
-            # Fast Pre-filter using Lat/Lon box (avoid calculating dist for everything)
             lat, lon = start_coords
-            # ~2.5km box approximation
-            search_df = streets_df[
-                (streets_df['coordinates'].str[0].between(lat - 0.025, lat + 0.025)) &
-                (streets_df['coordinates'].str[1].between(lon - 0.035, lon + 0.035))
-            ].copy()
+            
+            # Fast Box Filter (Vectorized)
+            # 0.025 deg lat ~= 2.7km. This is much faster than calculating distance for all.
+            mask = (
+                streets_df['coordinates'].str[0].between(lat - 0.025, lat + 0.025) &
+                streets_df['coordinates'].str[1].between(lon - 0.035, lon + 0.035)
+            )
+            search_df = streets_df[mask].copy()
 
-            # Precise Distance Calculation on the smaller subset
+            # Precise Distance Calculation on small subset
+            # (Assuming you have a 'distance' function defined elsewhere)
             search_df['dist_temp'] = search_df['coordinates'].apply(
                 lambda x: distance(start_coords, x, type="euclidean")
             )
             search_df = search_df[search_df['dist_temp'] <= 2000]
-        except Exception:
-            pass  # Fallback to global search if start_id is invalid
+            
+        except KeyError:
+            print("Start ID invalid, switching to global search.")
+            search_df = streets_df # Fallback
 
+    # --- 3. SEARCH LOOP ---
     while True:
-        prompt = f"Enter {'destination (<2km distance)' if start_id else 'your location'}"
-        query = input(f"{prompt}: ").strip()
-        if not query:
+        prompt = f"Enter {'destination (<2km)' if start_id else 'location'}"
+        user_input = input(f"{prompt}: ").strip()
+        if not user_input:
             continue
 
-        candidates = []
+        # Normalize Input (remove accents, lowercase)
+        query_clean = unidecode(user_input).lower()
 
-        # 2. FAST SEARCH: Vectorized substring match
-        matches = search_df[search_df['name'].str.contains(query, case=False, na=False, regex=False)]
+        # A. FAST EXACT MATCH (Vectorized)
+        # matches any part of string: "sagrada" in "basilica de la sagrada familia"
+        mask = search_df['name_clean'].str.contains(query_clean, regex=False)
+        candidates = search_df[mask].copy()
+        
+        candidates['score'] = 100 # Base score for exact substring match
+        
+        # B. FUZZY MATCH (Fallback or Enhancement)
+        # If we have too few matches, or to find non-exact matches (typos)
+        if len(candidates) < 5:
+            # Create a dict {index: name_clean} for RapidFuzz
+            choices = search_df[~mask]['name_clean'].to_dict()
+            
+            # extract returns: (match_string, score, index)
+            # scorer=fuzz.partial_ratio is best for substrings! 
+            # It finds "sagrada familia" inside "basilica..." with score 100.
+            fuzzy_matches = process.extract(
+                query_clean, 
+                choices, 
+                scorer=fuzz.partial_ratio, 
+                limit=5,
+                score_cutoff=75
+            )
+            
+            # Append fuzzy results
+            for match_str, score, idx in fuzzy_matches:
+                row = search_df.loc[idx].copy()
+                row['score'] = score - 10 # Slightly penalize fuzzy matches vs exact
+                # Convert Series to DataFrame (transposed) and append
+                candidates = pd.concat([candidates, row.to_frame().T])
 
-        # If we found matches, score them
-        if not matches.empty:
-            for nid, row in matches.iterrows():
-                name = row['name']
-                # Base score for substring match
-                score = 1.0 if query.lower() == name.lower() else 0.8
-
-                # Bonus for Places
-                if row['type'] in [1, 'place']:
-                    score += 0.2
-
-                # Distance (if available)
-                dist = row['dist_temp'] if 'dist_temp' in row else 0
-                candidates.append({'name': name, 'id': nid, 'score': score, 'dist': dist})
-
-        # 3. SLOW SEARCH (Fallback): Fuzzy matching
-        elif len(candidates) == 0:
-            print("Searching places...")
-
-            # Optimization: If searching globally, check PLACES first
-            if start_id is None:
-                fuzzy_pool = search_df[search_df['type'].isin([1, 'place'])]
-            else:
-                fuzzy_pool = search_df
-
-            for nid, row in fuzzy_pool.iterrows():
-                name = str(row['name'])
-                if name == "nan" or name == "Calle Sin Nombre":
-                    continue
-
-                ratio = SequenceMatcher(None, query.lower(), name.lower()).ratio()
-                if ratio > 0.65:
-                    score = ratio + (0.2 if row['type'] in [1, 'place'] else 0)
-                    dist = row['dist_temp'] if 'dist_temp' in row else 0
-                    candidates.append({'name': name, 'id': nid, 'score': score, 'dist': dist})
-
-        # 4. Deduplication logic
-        unique_candidates = {}
-        for c in candidates:
-            name = c['name']
-            if name not in unique_candidates:
-                unique_candidates[name] = c
-            else:
-                existing = unique_candidates[name]
-                # Prioritize: Closer Distance > Higher Score
-                is_closer = (start_id is not None and c['dist'] < existing['dist'])
-                is_better_score = (start_id is None and c['score'] > existing['score'])
-
-                if is_closer or is_better_score:
-                    unique_candidates[name] = c
-
-        final_list = list(unique_candidates.values())
-        final_list.sort(key=lambda x: x['score'], reverse=True)
-        top_matches = final_list[:5]
-
-        if not top_matches:
-            print(f"No matches, try again.")
+        # --- 4. SCORING & DEDUPLICATION ---
+        if candidates.empty:
+            print("No matches found. Try again.")
             continue
 
-        ntype = "Place" if streets_df.at[top_matches[0]['id'], 'type'] == 1 else "Street"
-        print(f"> Best match: {top_matches[0]['name']} [{ntype}]\n")
+        # Add Bonus Points
+        # 1. Places get a bonus
+        candidates['score'] += candidates['type'].apply(lambda x: 10 if x in [1, 'place'] else 0)
+        
+        # 2. Distance penalty (if distance exists)
+        if 'dist_temp' in candidates.columns:
+            # Penalize 1 point per 100m? Or just sort by distance secondary.
+            pass
 
-        return top_matches[0]['name'], top_matches[0]['id']
+        # Sort: Score Descending, then Distance Ascending
+        sort_cols = ['score']
+        ascending = [False]
+        if 'dist_temp' in candidates.columns:
+            sort_cols.append('dist_temp')
+            ascending.append(True)
+            
+        candidates = candidates.sort_values(by=sort_cols, ascending=ascending).head(1)
+        
+        best_match = candidates.iloc[0]
+        ntype = "Place" if best_match['type'] == 1 else "Street"
+        print(f"> Best match: {best_match['name']} [{ntype}]\n")
+        
+        return best_match['name'], best_match.name # name is the index
 
 
 # --- PATH CLEANING ---
@@ -343,4 +351,273 @@ def train(start, goal, streets, crowds, shortest_path=False,
             if not shortest_path:
                 print(f"· Episode {episode}: {steps} steps, Δ = {max_change:.4f}")
 
-    return path
+    return path, Q
+
+
+# --- HELPER: BEARING ---
+
+def get_cardinal_direction(start_coords, end_coords):
+    """Calculates direction (N, NE, E...) between two lat/lon points."""
+    lat1, lon1 = math.radians(start_coords[0]), math.radians(start_coords[1])
+    lat2, lon2 = math.radians(end_coords[0]), math.radians(end_coords[1])
+
+    d_lon = lon2 - lon1
+    x = math.sin(d_lon) * math.cos(lat2)
+    y = math.cos(lat1) * math.sin(lat2) - (math.sin(lat1) * math.cos(lat2) * math.cos(d_lon))
+
+    initial_bearing = math.atan2(x, y)
+    initial_bearing = math.degrees(initial_bearing)
+    compass_bearing = (initial_bearing + 360) % 360
+
+    dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
+    ix = round(compass_bearing / 45)
+    return dirs[ix % 8]
+
+
+# --- NAVIGATION MODE ---
+
+def navigation_mode(start, goal, streets, crowds, Q):
+    """
+    Fixed Navigation Mode:
+    - ALWAYS shows the option to 'Continue' on your current street.
+    - Calculates 'Turn' vs 'Continue' based on where you came from.
+    - Suppresses Nagging for 100m.
+    - Prevents Loops.
+    """
+    
+    current = start
+    prev = None
+    goal_coords = streets.at[goal, "coordinates"]
+    
+    visited = {start}
+    path_stack = [start]
+    
+    walked_dist = 0
+    
+    # Track the street we are CURRENTLY walking on
+    current_street_display = streets.at[start, "name"]
+    
+    # ANTI-NAG MEMORY
+    last_rejected_tokens = set()
+    dist_since_decision = 0 
+
+    print("\n[👇 Smart Navigation Mode]")
+    print("Agent suppresses repeated questions for 100m, then re-confirms.\n")
+
+    # --- HELPER: TOKENS ---
+    def get_tokens(name):
+        """Returns (set_of_clean_words, display_string)"""
+        if not isinstance(name, str): return (set(), "")
+        
+        if "sin nombre" in name.lower():
+            return ({"unnamed"}, "Unnamed Street")
+
+        clean = unidecode(str(name)).lower()
+        clean = re.sub(r'[^\w\s]', '', clean)
+        tokens = clean.split()
+        
+        stopwords = {
+            "carrer", "de", "del", "d", "la", "el", "els", "les", "los", "las",
+            "plaça", "placa", "plaza", "passeig", "avinguda", "av", "rambla", 
+            "calle", "gran", "via", "travessera", "sant", "santa", "passatge"
+        }
+        
+        meaningful = [t for t in tokens if t not in stopwords]
+        display = " ".join(t.title() for t in tokens if t in meaningful)
+        if not display: display = name
+        
+        return (set(meaningful), display)
+
+    # Initialize tokens for the starting street
+    current_street_tokens, current_street_display = get_tokens(streets.at[start, "name"])
+
+    while current != goal:
+        current_node_name = streets.at[current, "name"]
+        current_coords = streets.at[current, "coordinates"]
+        
+        curr_dist_goal = distance(current_coords, goal_coords, type="euclidean")
+        
+        # 1. CHECK SUPPRESSION LIMIT
+        if dist_since_decision > 100:
+            last_rejected_tokens.clear()
+            dist_since_decision = 0
+        
+        neighbors = streets.at[current, "connections"]
+        if not neighbors:
+            print("🚫 Dead end.")
+            break
+
+        # --- 2. GATHER OPTIONS ---
+        raw_options = []
+        for n in neighbors:
+            if n in visited: continue
+                
+            n_name = streets.at[n, "name"]
+            n_coords = streets.at[n, "coordinates"]
+            q_val = Q.get(current, {}).get(n, -float("inf"))
+            d_goal = distance(n_coords, goal_coords, type="euclidean")
+            bearing = get_cardinal_direction(current_coords, n_coords)
+
+            diff = d_goal - curr_dist_goal
+            if diff < -5:   prog = "↓ closer"
+            elif diff > 5:  prog = "↑ further"
+            else:           prog = "= steady"
+
+            tokens_set, display_str = get_tokens(n_name)
+            
+            # CRITICAL FIX: Determine "Continue" based on stored current street,
+            # NOT the node name (which might be the cross-street).
+            is_continue = bool(tokens_set & current_street_tokens)
+
+            raw_options.append({
+                "id": n,
+                "name": n_name,
+                "display": display_str,
+                "tokens": tokens_set,
+                "is_continue": is_continue, # Flag for filtering
+                "q": q_val,
+                "dir": bearing,
+                "len": streets.at[n, "length"],
+                "dist_to_goal": d_goal,
+                "progress": prog,
+                "diff": diff
+            })
+
+        if not raw_options:
+            print("⚠️ Stuck. Backtracking...")
+            break
+
+        # --- 3. DEDUPLICATE ---
+        best_per_street = {}
+        for opt in raw_options:
+            key = frozenset(opt["tokens"])
+            if key not in best_per_street:
+                best_per_street[key] = opt
+            else:
+                if opt["dist_to_goal"] < best_per_street[key]["dist_to_goal"]:
+                    best_per_street[key] = opt
+        
+        deduped_options = list(best_per_street.values())
+
+        # --- 4. FILTER ---
+        # Show options if:
+        # A) They are "Closer" or "Steady"
+        # B) OR they are the "Continue" option (Never hide the current street!)
+        
+        good_options = []
+        for o in deduped_options:
+            if o["progress"] in ["↓ closer", "= steady"] or o["is_continue"]:
+                good_options.append(o)
+                
+        final_options = good_options if good_options else deduped_options
+        final_options.sort(key=lambda x: (x["diff"], -x["q"]))
+
+        best = final_options[0]
+
+        # --- 5. INTELLIGENT AUTO-WALK ---
+        
+        # Identify if we have a valid Continue option
+        continue_option = next((o for o in final_options if o["is_continue"]), None)
+        
+        # Override Best if we recently rejected the turn and can continue
+        if continue_option and (best["tokens"] != continue_option["tokens"]):
+            if best["tokens"] & last_rejected_tokens:
+                best = continue_option
+
+        # Auto-walk conditions
+        # 1. Only 1 option
+        # 2. Staying on same street
+        # 3. Turning, but we rejected other options recently
+        
+        rejected_others = True
+        for o in final_options:
+            if o is not best:
+                if not (o["tokens"] & last_rejected_tokens):
+                    rejected_others = False
+                    break
+        
+        is_same_street = best["is_continue"]
+        
+        should_auto_walk = (best["id"] != goal) and (
+            len(final_options) == 1 or is_same_street or (rejected_others and dist_since_decision < 100)
+        )
+
+        if should_auto_walk:
+            # First move update
+            if walked_dist == 0:
+                # If we just switched streets (e.g. at a turn), update name
+                # But if we are continuing, keep the name
+                current_street_display = best["display"]
+                current_street_tokens = best["tokens"]
+
+            walked_dist += best["len"]
+            dist_since_decision += best["len"]
+            
+            prev = current
+            current = best["id"]
+            visited.add(current)
+            path_stack.append(current)
+            continue
+
+        # --- 6. DISPLAY ---
+        
+        if walked_dist > 0:
+            steps = int(walked_dist / 0.8)
+            print(f"🚶 Go straight on {current_street_display} for {int(walked_dist)}m ({steps} steps)")
+            print(f"   ↓")
+        
+        walked_dist = 0
+        dist_since_decision = 0 
+
+        if best["id"] == goal:
+            print(f"🏁 Arrived at {best['name']}!")
+            return
+
+        print(f"📍 Intersection at {current_node_name}")
+        
+        for i, opt in enumerate(final_options, 1):
+            steps_tot = int(opt["dist_to_goal"] / 0.8)
+            crowd = estimate_crowd(opt["id"], crowds)
+            c_str = "<10" if crowd < 10 else str(int(crowd))
+            star = "★" if i == 1 else " "
+            
+            # Verb logic is now robust
+            verb = "continue" if opt["is_continue"] else "turn onto"
+            
+            print(f"  {i}. {star} [{opt['dir']}] {verb} {opt['display']} "
+                  f"({opt['progress']}, {steps_tot} steps left, crowd: {c_str})")
+
+        # --- 7. INPUT ---
+        while True:
+            choice = input("> ").strip().lower()
+            if choice == 'q': return
+            if choice.isdigit():
+                idx = int(choice) - 1
+                if 0 <= idx < len(final_options):
+                    selected = final_options[idx]
+                    
+                    # Memory Update
+                    if not selected["is_continue"]:
+                        last_rejected_tokens = set()
+                    else:
+                        new_rejects = set()
+                        for i, o in enumerate(final_options):
+                            if i != idx:
+                                new_rejects.update(o["tokens"])
+                        last_rejected_tokens = new_rejects
+
+                    dist_since_decision = 0
+                    
+                    # Update "Current Street" tracking
+                    current_street_display = selected["display"]
+                    current_street_tokens = selected["tokens"]
+                    
+                    prev = current
+                    current = selected["id"]
+                    visited.add(current)
+                    path_stack.append(current)
+                    break
+                else:
+                    print("Invalid.")
+            else:
+                print("Enter number or 'q'.")
