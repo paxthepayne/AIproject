@@ -29,7 +29,7 @@ if __name__ == "__main__":
     # Time and Weather (Sunny/Cloudy/Rainy)
     print("Fetching weather info...")
     current_time = datetime.datetime.now()
-    weather = tools.get_barcelona_weather("")
+    weather = tools.get_weather()
     print(f"> {current_time.strftime('%A %H:%M')}, {weather}\n")
     
     weekday, hour = current_time.weekday(), current_time.hour
@@ -74,5 +74,4 @@ if __name__ == "__main__":
     print(f"[Shortest path] {int(shortest_path_length)} meters | {shortest_path_total_crowd*1000/shortest_path_length:.2f} average crowd exposure")
     print(" -> ".join(clean_shortest_path), "\n")
 
-    #tools.plot_paths(city_map, path, shortest_path)
 

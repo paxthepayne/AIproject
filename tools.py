@@ -1,3 +1,5 @@
+# --- IMPORTS ---
+
 import math
 import random
 import pandas as pd
@@ -5,22 +7,17 @@ from difflib import SequenceMatcher
 import re
 import unicodedata
 import requests
-import matplotlib.pyplot as plt
 
 
+# --- WEATHER ---
 
-# ==========================================
-# WEATHER
-# ==========================================
-
-def get_barcelona_weather(api_key):
-    lat, lon = 41.3851, 2.1734
+def get_weather():
 
     url = "https://weather.googleapis.com/v1/currentConditions:lookup"
     params = {
-        "key": api_key,
-        "location.latitude": lat,
-        "location.longitude": lon
+        "key": "api_key",
+        "location.latitude": 41.3851,
+        "location.longitude": 2.1734
     }
 
     try:
@@ -40,9 +37,8 @@ def get_barcelona_weather(api_key):
     except Exception:
         return "Cloudy"
 
-# ==========================================
-# 1. GEOMETRY & SEARCH TOOLS
-# ==========================================
+
+# --- DISTANCE ---
 
 def distance(start_coordinates, end_coordinates, type="manhattan"):
     lat1, lon1 = start_coordinates
@@ -62,6 +58,8 @@ def distance(start_coordinates, end_coordinates, type="manhattan"):
 
     return dist
 
+
+# --- PLACE NAME AUTOCOMPLETE ---
 
 def find_place(streets_df, start_id=None):
     """
@@ -166,6 +164,8 @@ def find_place(streets_df, start_id=None):
         return top_matches[0]['name'], top_matches[0]['id']
 
 
+# --- PATH CLEANING ---
+
 def normalize_street_name(name):
     if not isinstance(name, str):
         return name
@@ -185,7 +185,6 @@ def normalize_street_name(name):
 
     return name
 
-
 def clean(path_names):
     clean_path = []
     seen = set()
@@ -198,75 +197,8 @@ def clean(path_names):
             seen.add(norm)
     return clean_path
 
-def plot_paths(city_map, path, shortest_path):
-    # Extract coordinates
-    path_coords = city_map.loc[path, "coordinates"].tolist()
-    sp_coords = city_map.loc[shortest_path, "coordinates"].tolist()
 
-    # Split lat / lon
-    path_lats, path_lons = zip(*path_coords)
-    sp_lats, sp_lons = zip(*sp_coords)
-
-    plt.figure(figsize=(10, 10))
-
-    # Crowd-aware path
-    plt.plot(
-        path_lons,
-        path_lats,
-        marker="o",
-        linewidth=2,
-        label="Crowd-aware path"
-    )
-
-    # Shortest path
-    plt.plot(
-        sp_lons,
-        sp_lats,
-        marker="o",
-        linewidth=2,
-        linestyle="--",
-        label="Shortest path"
-    )
-
-    # Start & goal
-    plt.scatter(
-        [path_lons[0], path_lons[-1]],
-        [path_lats[0], path_lats[-1]],
-        s=100,
-        zorder=5,
-        label="Start / Goal"
-    )
-
-    plt.xlabel("Longitude")
-    plt.ylabel("Latitude")
-    plt.title("Smart Crowd Router – Path Comparison")
-    plt.legend()
-    plt.grid(True)
-    plt.axis("equal")
-    plt.show()
-
-
-# ==========================================
-# 2. CROWD & Q-LEARNING AGENT
-# ==========================================
-
-def estimate_crowd(streets, state, crowds):
-    """
-    Estimate crowd level for a given street node.
-    Includes:
-    - Google popular times
-    - Weather impact
-    - Nearby events
-    """
-    crowds = crowds[state]
-
-    crowd = 0.0
-
-    if pd.notna(crowds):
-        crowd += float(crowds)
-
-    return crowd
-
+# --- Q-LEARNING AGENT ---
 
 def calculate_reward(state, next_state, goal, streets, crowds, shortest_path):
     """
@@ -292,15 +224,15 @@ def calculate_reward(state, next_state, goal, streets, crowds, shortest_path):
     if dist_next < dist_current:
         reward += 1
 
+    # Penalty based on crowd or length
     if shortest_path:
         edge_len = streets.at[next_state, "length"]
         reward -= edge_len / 50
     else:
-        crowd = estimate_crowd(streets, next_state, crowds)
+        crowd = crowds[state] if pd.notna(crowds[state]) else 0.0
         reward -= crowd
 
     return reward
-
 
 def choose_action(state, epsilon, Q, goal, streets, crowds, shortest_path):
     # Get connections
@@ -331,18 +263,10 @@ def choose_action(state, epsilon, Q, goal, streets, crowds, shortest_path):
 
     return next_state, reward
 
-
-def train(
-    start,
-    goal,
-    streets,
-    crowds,
-    shortest_path=False,
-    parameters=[0.5, 0.999, 1.0, 1.0, 0.997],
-    episodes=5000,
-    min_delta=0.01,
-    patience=5
-):
+def train(start, goal, streets, crowds, shortest_path=False, 
+          parameters=[0.5, 0.999, 1.0, 1.0, 0.997], 
+          episodes=5000, min_delta=0.01, patience=5):
+    
     Q = {}
     alpha, a_decay, gamma, epsilon, e_decay = parameters
 
