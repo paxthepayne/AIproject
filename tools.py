@@ -246,7 +246,7 @@ def calculate_reward(state, next_state, goal, streets, crowds, shortest_path):
     # Penalty based on crowd or length
     if shortest_path:
         edge_len = streets.at[next_state, "length"]
-        reward -= edge_len / 50
+        reward -= edge_len/50
     else:
         crowd = estimate_crowd(next_state, crowds)
         reward -= crowd
@@ -283,7 +283,7 @@ def choose_action(state, epsilon, Q, goal, streets, crowds, shortest_path):
     return next_state, reward
 
 def train(start, goal, streets, crowds, shortest_path=False, 
-          parameters=[0.5, 0.999, 1.0, 1.0, 0.997], 
+          parameters=[0.5, 0.9992, 1.0, 1.0, 0.999], 
           episodes=5000, min_delta=0.01, patience=5):
     
     Q = {}
