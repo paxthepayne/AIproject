@@ -106,7 +106,7 @@ def find_place(streets_df, start_id=None):
 
     # --- 3. SEARCH LOOP ---
     while True:
-        prompt = f"Enter {'destination (<2km)' if start_id else 'location'}"
+        prompt = f"Enter {'destination (<3km)' if start_id else 'location'}"
         user_input = input(f"{prompt}: ").strip()
         if not user_input:
             continue
@@ -354,270 +354,97 @@ def train(start, goal, streets, crowds, shortest_path=False,
     return path, Q
 
 
-# --- HELPER: BEARING ---
-
-def get_cardinal_direction(start_coords, end_coords):
-    """Calculates direction (N, NE, E...) between two lat/lon points."""
-    lat1, lon1 = math.radians(start_coords[0]), math.radians(start_coords[1])
-    lat2, lon2 = math.radians(end_coords[0]), math.radians(end_coords[1])
-
-    d_lon = lon2 - lon1
-    x = math.sin(d_lon) * math.cos(lat2)
-    y = math.cos(lat1) * math.sin(lat2) - (math.sin(lat1) * math.cos(lat2) * math.cos(d_lon))
-
-    initial_bearing = math.atan2(x, y)
-    initial_bearing = math.degrees(initial_bearing)
-    compass_bearing = (initial_bearing + 360) % 360
-
-    dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
-    ix = round(compass_bearing / 45)
-    return dirs[ix % 8]
-
-
-# --- NAVIGATION MODE ---
+# --- NAVIGATION ---
 
 def navigation_mode(start, goal, streets, crowds, Q):
-    """
-    Fixed Navigation Mode:
-    - ALWAYS shows the option to 'Continue' on your current street.
-    - Calculates 'Turn' vs 'Continue' based on where you came from.
-    - Suppresses Nagging for 100m.
-    - Prevents Loops.
-    """
+    print("\n[Smart Navigation Mode]\n")
     
-    current = start
-    prev = None
-    goal_coords = streets.at[goal, "coordinates"]
+    curr, goal_coords = start, streets.at[goal, "coordinates"]
+    visited, path, last_rejects = {start}, [start], set()
+    walked = since_dec = 0
     
-    visited = {start}
-    path_stack = [start]
-    
-    walked_dist = 0
-    
-    # Track the street we are CURRENTLY walking on
-    current_street_display = streets.at[start, "name"]
-    
-    # ANTI-NAG MEMORY
-    last_rejected_tokens = set()
-    dist_since_decision = 0 
+    STOPWORDS = {"carrer", "de", "del", "d", "la", "el", "els", "les", "los", "las", "plaça", "placa", "plaza", "passeig", "avinguda", "av", "rambla", "calle", "gran", "via", "travessera", "sant", "santa", "passatge"}
 
-    print("\n[👇 Smart Navigation Mode]")
-    print("Agent suppresses repeated questions for 100m, then re-confirms.\n")
+    def get_tok(n):
+        if "sin nombre" in str(n).lower(): return ({"unnamed"}, "Unnamed Street")
+        clean = [t for t in re.sub(r'[^\w\s]', '', unidecode(str(n)).lower()).split() if t not in STOPWORDS]
+        return (set(clean), " ".join(t.title() for t in clean) or n)
 
-    # --- HELPER: TOKENS ---
-    def get_tokens(name):
-        """Returns (set_of_clean_words, display_string)"""
-        if not isinstance(name, str): return (set(), "")
+    cur_toks, cur_disp = get_tok(streets.at[start, "name"])
+
+    while curr != goal:
+        cur_node, cur_xy = streets.at[curr, "name"], streets.at[curr, "coordinates"]
+        dist_g = distance(cur_xy, goal_coords, type="euclidean")
         
-        if "sin nombre" in name.lower():
-            return ({"unnamed"}, "Unnamed Street")
+        if since_dec > 100: last_rejects.clear() 
 
-        clean = unidecode(str(name)).lower()
-        clean = re.sub(r'[^\w\s]', '', clean)
-        tokens = clean.split()
-        
-        stopwords = {
-            "carrer", "de", "del", "d", "la", "el", "els", "les", "los", "las",
-            "plaça", "placa", "plaza", "passeig", "avinguda", "av", "rambla", 
-            "calle", "gran", "via", "travessera", "sant", "santa", "passatge"
-        }
-        
-        meaningful = [t for t in tokens if t not in stopwords]
-        display = " ".join(t.title() for t in tokens if t in meaningful)
-        if not display: display = name
-        
-        return (set(meaningful), display)
-
-    # Initialize tokens for the starting street
-    current_street_tokens, current_street_display = get_tokens(streets.at[start, "name"])
-
-    while current != goal:
-        current_node_name = streets.at[current, "name"]
-        current_coords = streets.at[current, "coordinates"]
-        
-        curr_dist_goal = distance(current_coords, goal_coords, type="euclidean")
-        
-        # 1. CHECK SUPPRESSION LIMIT
-        if dist_since_decision > 100:
-            last_rejected_tokens.clear()
-            dist_since_decision = 0
-        
-        neighbors = streets.at[current, "connections"]
-        if not neighbors:
-            print("🚫 Dead end.")
-            break
-
-        # --- 2. GATHER OPTIONS ---
-        raw_options = []
-        for n in neighbors:
-            if n in visited: continue
-                
-            n_name = streets.at[n, "name"]
-            n_coords = streets.at[n, "coordinates"]
-            q_val = Q.get(current, {}).get(n, -float("inf"))
-            d_goal = distance(n_coords, goal_coords, type="euclidean")
-            bearing = get_cardinal_direction(current_coords, n_coords)
-
-            diff = d_goal - curr_dist_goal
-            if diff < -5:   prog = "↓ closer"
-            elif diff > 5:  prog = "↑ further"
-            else:           prog = "= steady"
-
-            tokens_set, display_str = get_tokens(n_name)
+        # 1. Gather & Deduplicate Options
+        opts_map = {}
+        for n in [x for x in streets.at[curr, "connections"] if x not in visited]:
+            n_nm, n_xy = streets.at[n, "name"], streets.at[n, "coordinates"]
+            d_goal = distance(n_xy, goal_coords, type="euclidean")
+            toks, disp = get_tok(n_nm)
             
-            # CRITICAL FIX: Determine "Continue" based on stored current street,
-            # NOT the node name (which might be the cross-street).
-            is_continue = bool(tokens_set & current_street_tokens)
+            diff = d_goal - dist_g
+            prog = "closer" if diff < -5 else ("further" if diff > 5 else "steady")
+            
+            opt = {
+                "id": n, "name": n_nm, "display": disp, "tokens": toks,
+                "is_cont": bool(toks & cur_toks), "q": Q.get(curr, {}).get(n, -float("inf")),
+                "len": streets.at[n, "length"], "d_goal": d_goal, "prog": prog, "diff": diff
+            }
+            key = frozenset(toks)
+            if key not in opts_map or d_goal < opts_map[key]["d_goal"]: opts_map[key] = opt
 
-            raw_options.append({
-                "id": n,
-                "name": n_name,
-                "display": display_str,
-                "tokens": tokens_set,
-                "is_continue": is_continue, # Flag for filtering
-                "q": q_val,
-                "dir": bearing,
-                "len": streets.at[n, "length"],
-                "dist_to_goal": d_goal,
-                "progress": prog,
-                "diff": diff
-            })
+        raw = list(opts_map.values())
+        if not raw: print("Dead end." if not streets.at[curr, "connections"] else "Stuck. Backtracking..."); break
 
-        if not raw_options:
-            print("⚠️ Stuck. Backtracking...")
-            break
+        # 2. Filter & Sort
+        final = [o for o in raw if o["prog"] != "further" or o["is_cont"]] or raw
+        final.sort(key=lambda x: (x["diff"], -x["q"]))
+        best = final[0]
 
-        # --- 3. DEDUPLICATE ---
-        best_per_street = {}
-        for opt in raw_options:
-            key = frozenset(opt["tokens"])
-            if key not in best_per_street:
-                best_per_street[key] = opt
-            else:
-                if opt["dist_to_goal"] < best_per_street[key]["dist_to_goal"]:
-                    best_per_street[key] = opt
+        # 3. Auto-walk Logic
+        cont_opt = next((o for o in final if o["is_cont"]), None)
+        if cont_opt and best["tokens"] != cont_opt["tokens"] and (best["tokens"] & last_rejects): best = cont_opt
         
-        deduped_options = list(best_per_street.values())
-
-        # --- 4. FILTER ---
-        # Show options if:
-        # A) They are "Closer" or "Steady"
-        # B) OR they are the "Continue" option (Never hide the current street!)
+        rej_others = all(not (o["tokens"] & last_rejects) for o in final if o is not best)
         
-        good_options = []
-        for o in deduped_options:
-            if o["progress"] in ["↓ closer", "= steady"] or o["is_continue"]:
-                good_options.append(o)
-                
-        final_options = good_options if good_options else deduped_options
-        final_options.sort(key=lambda x: (x["diff"], -x["q"]))
-
-        best = final_options[0]
-
-        # --- 5. INTELLIGENT AUTO-WALK ---
-        
-        # Identify if we have a valid Continue option
-        continue_option = next((o for o in final_options if o["is_continue"]), None)
-        
-        # Override Best if we recently rejected the turn and can continue
-        if continue_option and (best["tokens"] != continue_option["tokens"]):
-            if best["tokens"] & last_rejected_tokens:
-                best = continue_option
-
-        # Auto-walk conditions
-        # 1. Only 1 option
-        # 2. Staying on same street
-        # 3. Turning, but we rejected other options recently
-        
-        rejected_others = True
-        for o in final_options:
-            if o is not best:
-                if not (o["tokens"] & last_rejected_tokens):
-                    rejected_others = False
-                    break
-        
-        is_same_street = best["is_continue"]
-        
-        should_auto_walk = (best["id"] != goal) and (
-            len(final_options) == 1 or is_same_street or (rejected_others and dist_since_decision < 100)
+        auto = (best["id"] != goal) and (
+            len(final) == 1 or 
+            (best["is_cont"] and since_dec < 100) or 
+            (rej_others and since_dec < 100)
         )
 
-        if should_auto_walk:
-            # First move update
-            if walked_dist == 0:
-                # If we just switched streets (e.g. at a turn), update name
-                # But if we are continuing, keep the name
-                current_street_display = best["display"]
-                current_street_tokens = best["tokens"]
-
-            walked_dist += best["len"]
-            dist_since_decision += best["len"]
-            
-            prev = current
-            current = best["id"]
-            visited.add(current)
-            path_stack.append(current)
+        if auto:
+            if walked == 0: cur_disp, cur_toks = best["display"], best["tokens"]
+            walked += best["len"]; since_dec += best["len"]
+            visited.add(best["id"]); path.append(best["id"])
+            curr = best["id"]
             continue
 
-        # --- 6. DISPLAY ---
+        # 4. Display & Input
+        if walked: print(f"Go straight on {cur_disp} for {int(walked)}m")
+        walked = since_dec = 0 
         
-        if walked_dist > 0:
-            steps = int(walked_dist / 0.8)
-            print(f"🚶 Go straight on {current_street_display} for {int(walked_dist)}m ({steps} steps)")
-            print(f"   ↓")
+        if best["id"] == goal: print(f"Arrived at {best['name']}!"); return
+        print(f"Intersection at {cur_node}")
         
-        walked_dist = 0
-        dist_since_decision = 0 
+        for i, o in enumerate(final, 1):
+            c_val = estimate_crowd(o["id"], crowds)
+            verb = "continue" if o["is_cont"] else "turn onto"
+            # Updated Output Format
+            print(f"  {i}. {verb} {o['display']} ({o['prog']}, {int(o['d_goal'])} m to goal, <10 crowd)")
 
-        if best["id"] == goal:
-            print(f"🏁 Arrived at {best['name']}!")
-            return
-
-        print(f"📍 Intersection at {current_node_name}")
-        
-        for i, opt in enumerate(final_options, 1):
-            steps_tot = int(opt["dist_to_goal"] / 0.8)
-            crowd = estimate_crowd(opt["id"], crowds)
-            c_str = "<10" if crowd < 10 else str(int(crowd))
-            star = "★" if i == 1 else " "
-            
-            # Verb logic is now robust
-            verb = "continue" if opt["is_continue"] else "turn onto"
-            
-            print(f"  {i}. {star} [{opt['dir']}] {verb} {opt['display']} "
-                  f"({opt['progress']}, {steps_tot} steps left, crowd: {c_str})")
-
-        # --- 7. INPUT ---
         while True:
-            choice = input("> ").strip().lower()
-            if choice == 'q': return
-            if choice.isdigit():
-                idx = int(choice) - 1
-                if 0 <= idx < len(final_options):
-                    selected = final_options[idx]
-                    
-                    # Memory Update
-                    if not selected["is_continue"]:
-                        last_rejected_tokens = set()
-                    else:
-                        new_rejects = set()
-                        for i, o in enumerate(final_options):
-                            if i != idx:
-                                new_rejects.update(o["tokens"])
-                        last_rejected_tokens = new_rejects
-
-                    dist_since_decision = 0
-                    
-                    # Update "Current Street" tracking
-                    current_street_display = selected["display"]
-                    current_street_tokens = selected["tokens"]
-                    
-                    prev = current
-                    current = selected["id"]
-                    visited.add(current)
-                    path_stack.append(current)
-                    break
-                else:
-                    print("Invalid.")
-            else:
-                print("Enter number or 'q'.")
+            ch = input("> ").strip().lower()
+            if ch == 'q': return
+            if ch.isdigit() and 0 <= (idx := int(ch)-1) < len(final):
+                sel = final[idx]
+                if not sel["is_cont"]: last_rejects = set()
+                else: last_rejects = {t for o in final if o is not sel for t in o["tokens"]}
+                
+                cur_disp, cur_toks = sel["display"], sel["tokens"]
+                visited.add(sel["id"]); path.append(sel["id"]); curr = sel["id"]; since_dec = 0
+                break
+            print("Invalid.")
