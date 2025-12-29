@@ -12,29 +12,32 @@ import requests
 # --- WEATHER ---
 
 def get_weather():
-
-    url = "https://weather.googleapis.com/v1/currentConditions:lookup"
+    # Open-Meteo endpoint
+    url = "https://api.open-meteo.com/v1/forecast"
+    
     params = {
-        "key": "api_key",
-        "location.latitude": 41.3851,
-        "location.longitude": 2.1734
+        "latitude": 41.3851,
+        "longitude": 2.1734,
+        "current_weather": "true"
     }
 
     try:
         resp = requests.get(url, params=params, timeout=5)
         data = resp.json()
 
-        wtype = data["weatherCondition"]["type"]
+        code = data["current_weather"]["weathercode"]
 
-        if wtype == "CLEAR":
+        if code == 0:
             return "Sunny"
-        if wtype in ["CLOUDY", "MOSTLY_CLOUDY", "PARTLY_CLOUDY"]:
+        if code in [1, 2, 3]:
             return "Cloudy"
-        if wtype in ["RAIN", "LIGHT_RAIN", "HEAVY_RAIN", "SHOWERS", "THUNDERSTORMS"]:
+        if code in [51, 53, 55, 61, 63, 65, 80, 81, 82, 95]: # Rain/Thunder codes
             return "Rainy"
-
-        return "Cloudy"
-    except Exception:
+        
+        return "Cloudy" # Default fallback
+        
+    except Exception as e:
+        print(f"Error: {e}")
         return "Cloudy"
 
 
@@ -200,6 +203,14 @@ def clean(path_names):
 
 # --- Q-LEARNING AGENT ---
 
+def estimate_crowd(street_id, crowds):
+    """
+    Estimate crowd level for a street segment.
+    """
+    if pd.isna(crowds[street_id]):
+        return 0.0
+    return crowds[street_id]
+
 def calculate_reward(state, next_state, goal, streets, crowds, shortest_path):
     """
     Reward function for Q-learning agent.
@@ -229,7 +240,7 @@ def calculate_reward(state, next_state, goal, streets, crowds, shortest_path):
         edge_len = streets.at[next_state, "length"]
         reward -= edge_len / 50
     else:
-        crowd = crowds[state] if pd.notna(crowds[state]) else 0.0
+        crowd = estimate_crowd(next_state, crowds)
         reward -= crowd
 
     return reward

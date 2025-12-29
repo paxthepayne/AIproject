@@ -3,17 +3,30 @@ Main execution script for Smart Crowd Router.
 Manages data loading, user interaction, and pathfinding execution.
 """
 
+# --- IMPORTS ---
+
+# System
 import gzip
 import json
+
+# Data Handling
 import pandas as pd
+
+# Time
 import datetime
-import tools
+
+# Multiprocessing
 from multiprocessing import Pool
 
+# Custom Tools
+import tools
 
+# Function to run training in parallel
 def run_train(args):
     return tools.train(*args)
 
+
+# --- MAIN EXECUTION ---
 
 if __name__ == "__main__":
     print(f"[AI Project - Smart Crowd Router] By Filippo Pacini, Jacopo Crispolti, Liseth Berdeja, Sieun You\n")
@@ -56,11 +69,11 @@ if __name__ == "__main__":
     shortest_path_length = city_map.loc[shortest_path, "length"].sum()
 
     path_total_crowd = sum(
-        tools.estimate_crowd(city_map, s, current_crowds)
+        tools.estimate_crowd(s, current_crowds)
         for s in path
     )
     shortest_path_total_crowd = sum(
-        tools.estimate_crowd(city_map, s, current_crowds)
+        tools.estimate_crowd(s, current_crowds)
         for s in shortest_path
     )
 
