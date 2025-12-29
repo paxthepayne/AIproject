@@ -21,9 +21,10 @@ from multiprocessing import Pool
 # Custom Tools
 import tools
 
-# Function to run training in parallel
-def run_train(args):
-    return tools.train(*args)
+# Wrapper function to allow multiprocessing
+def run_task(task_args):
+    func, args = task_args
+    return func(*args)
 
 
 # --- MAIN EXECUTION ---
@@ -55,15 +56,15 @@ if __name__ == "__main__":
     goal_name, goal_id = tools.find_place(city_map, start_id=start_id)
 
     # Pathfinding (in parallel)
+    # We run Q-Learning for the "Smart" path and A* for the "Shortest" path
+    tasks = [
+        (tools.train, (start_id, goal_id, city_map, current_crowds)),
+        (tools.a_star, (start_id, goal_id, city_map))                 
+    ]
     with Pool(processes=2) as pool:
-        results = pool.map(
-            run_train,
-            [
-                (start_id, goal_id, city_map, current_crowds),
-                (start_id, goal_id, city_map, current_crowds, True),  # shortest_path = True
-            ],
-        )
-    (path, q_table), (shortest_path, _) = results
+        results = pool.map(run_task, tasks)
+        
+    (path, q_table), shortest_path = results
 
     # Report Results
     path_length = city_map.loc[path, "length"].sum()
@@ -81,13 +82,12 @@ if __name__ == "__main__":
     clean_path = tools.clean(city_map.loc[path, "name"].tolist())
     clean_shortest_path = tools.clean(city_map.loc[shortest_path, "name"].tolist())
 
-    print(f"\n[Suggested path] {int(path_length)} meters | {path_total_crowd*1000/path_length:.2f} average crowd exposure")
+    print(f"\n[Suggested path] {int(path_length)} meters | {path_total_crowd*500/path_length:.2f} crowd exposure")
     print(" -> ".join(clean_path), "\n")
-    print(f"[Shortest path] {int(shortest_path_length)} meters | {shortest_path_total_crowd*1000/shortest_path_length:.2f} average crowd exposure")
+    print(f"[Shortest path] {int(shortest_path_length)} meters | {shortest_path_total_crowd*500/shortest_path_length:.2f} crowd exposure")
     print(" -> ".join(clean_shortest_path), "\n")
 
     # Optional Navigation Mode
     choice = input("Enter navigation mode? (y/n): ").strip().lower()
     if choice == "y":
         tools.navigation_mode(start_id, goal_id, city_map, current_crowds, q_table)
-

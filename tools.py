@@ -3,13 +3,12 @@
 import math
 import random
 import pandas as pd
-import pandas as pd
 from unidecode import unidecode
 from rapidfuzz import process, fuzz
 import re
 import unicodedata
 import requests
-from collections import defaultdict
+import heapq
 
 
 # --- WEATHER ---
@@ -71,30 +70,22 @@ def find_place(streets_df, start_id=None):
     """
     Optimized place search using vectorization and smart fuzzy matching.
     """
-    # --- 1. PRE-COMPUTATION (Do this once) ---
-    # Create a normalized column for fast vector search (lowercase + no accents)
-    # We use unidecode to turn "Família" -> "familia"
     if 'name_clean' not in streets_df.columns:
         streets_df['name_clean'] = streets_df['name'].apply(lambda x: unidecode(str(x)).lower())
 
     search_df = streets_df
 
-    # --- 2. GEOGRAPHIC FILTER (If start location exists) ---
     if start_id is not None:
         try:
             start_coords = streets_df.at[start_id, 'coordinates']
             lat, lon = start_coords
             
-            # Fast Box Filter (Vectorized)
-            # 0.025 deg lat ~= 2.7km. This is much faster than calculating distance for all.
             mask = (
                 streets_df['coordinates'].str[0].between(lat - 0.025, lat + 0.025) &
                 streets_df['coordinates'].str[1].between(lon - 0.035, lon + 0.035)
             )
             search_df = streets_df[mask].copy()
 
-            # Precise Distance Calculation on small subset
-            # (Assuming you have a 'distance' function defined elsewhere)
             search_df['dist_temp'] = search_df['coordinates'].apply(
                 lambda x: distance(start_coords, x, type="euclidean")
             )
@@ -102,34 +93,24 @@ def find_place(streets_df, start_id=None):
             
         except KeyError:
             print("Start ID invalid, switching to global search.")
-            search_df = streets_df # Fallback
+            search_df = streets_df 
 
-    # --- 3. SEARCH LOOP ---
     while True:
         prompt = f"Enter {'destination (<3km)' if start_id else 'location'}"
         user_input = input(f"{prompt}: ").strip()
         if not user_input:
             continue
 
-        # Normalize Input (remove accents, lowercase)
         query_clean = unidecode(user_input).lower()
 
-        # A. FAST EXACT MATCH (Vectorized)
-        # matches any part of string: "sagrada" in "basilica de la sagrada familia"
         mask = search_df['name_clean'].str.contains(query_clean, regex=False)
         candidates = search_df[mask].copy()
         
-        candidates['score'] = 100 # Base score for exact substring match
+        candidates['score'] = 100 
         
-        # B. FUZZY MATCH (Fallback or Enhancement)
-        # If we have too few matches, or to find non-exact matches (typos)
         if len(candidates) < 5:
-            # Create a dict {index: name_clean} for RapidFuzz
             choices = search_df[~mask]['name_clean'].to_dict()
             
-            # extract returns: (match_string, score, index)
-            # scorer=fuzz.partial_ratio is best for substrings! 
-            # It finds "sagrada familia" inside "basilica..." with score 100.
             fuzzy_matches = process.extract(
                 query_clean, 
                 choices, 
@@ -138,28 +119,17 @@ def find_place(streets_df, start_id=None):
                 score_cutoff=75
             )
             
-            # Append fuzzy results
             for match_str, score, idx in fuzzy_matches:
                 row = search_df.loc[idx].copy()
-                row['score'] = score - 10 # Slightly penalize fuzzy matches vs exact
-                # Convert Series to DataFrame (transposed) and append
+                row['score'] = score - 10 
                 candidates = pd.concat([candidates, row.to_frame().T])
 
-        # --- 4. SCORING & DEDUPLICATION ---
         if candidates.empty:
             print("No matches found. Try again.")
             continue
 
-        # Add Bonus Points
-        # 1. Places get a bonus
         candidates['score'] += candidates['type'].apply(lambda x: 10 if x in [1, 'place'] else 0)
         
-        # 2. Distance penalty (if distance exists)
-        if 'dist_temp' in candidates.columns:
-            # Penalize 1 point per 100m? Or just sort by distance secondary.
-            pass
-
-        # Sort: Score Descending, then Distance Ascending
         sort_cols = ['score']
         ascending = [False]
         if 'dist_temp' in candidates.columns:
@@ -172,7 +142,7 @@ def find_place(streets_df, start_id=None):
         ntype = "Place" if best_match['type'] == 1 else "Street"
         print(f"> Best match: {best_match['name']} [{ntype}]\n")
         
-        return best_match['name'], best_match.name # name is the index
+        return best_match['name'], best_match.name 
 
 
 # --- PATH CLEANING ---
@@ -181,17 +151,10 @@ def normalize_street_name(name):
     if not isinstance(name, str):
         return name
 
-    # Lowercase
     name = name.lower()
-
-    # Remove accents
     name = unicodedata.normalize('NFKD', name)
     name = ''.join(c for c in name if not unicodedata.combining(c))
-
-    # Remove common fillers
     name = re.sub(r'\b(de|del|la|el|plaça|plaza)\b', '', name)
-
-    # Collapse spaces
     name = re.sub(r'\s+', ' ', name).strip()
 
     return name
@@ -209,27 +172,64 @@ def clean(path_names):
     return clean_path
 
 
+# --- A* ALGORITHM (Shortest Path) ---
+
+def a_star(start, goal, streets):
+    """
+    Calculates the shortest path using A* algorithm.
+    Heuristic: Euclidean distance to goal.
+    Cost: Length of street segments.
+    """
+    open_set = []
+    heapq.heappush(open_set, (0, start))
+    came_from = {}
+    g_score = {start: 0}
+    goal_coords = streets.at[goal, "coordinates"]
+
+    while open_set:
+        _, current = heapq.heappop(open_set)
+
+        if current == goal:
+            path = []
+            while current in came_from:
+                path.append(current)
+                current = came_from[current]
+            path.append(start)
+            # Return reversed path and empty dict (to match structure)
+            return path[::-1]
+
+        current_g = g_score[current]
+
+        for neighbor in streets.at[current, "connections"]:
+            weight = streets.at[neighbor, "length"]
+            tentative_g = current_g + weight
+
+            if tentative_g < g_score.get(neighbor, float('inf')):
+                came_from[neighbor] = current
+                g_score[neighbor] = tentative_g
+                h = distance(streets.at[neighbor, "coordinates"], goal_coords, type="euclidean")
+                f = tentative_g + h
+                heapq.heappush(open_set, (f, neighbor))
+
+    return []
+
+
 # --- Q-LEARNING AGENT ---
 
 def estimate_crowd(street_id, crowds):
-    """
-    Estimate crowd level for a street segment.
-    """
     if pd.isna(crowds[street_id]):
         return 0.0
     return crowds[street_id]
 
-def calculate_reward(state, next_state, goal, streets, crowds, shortest_path):
+def calculate_reward(state, next_state, goal, streets, crowds):
     """
-    Reward function for Q-learning agent.
+    Reward function for Q-learning agent (Crowd Optimized).
     """
-    # Basic reward structure
     if next_state == goal:
         reward = 10000
     else:
         reward = -1
 
-    # Distance calculations
     dist_current = distance(
         streets.at[state, "coordinates"],
         streets.at[goal, "coordinates"]
@@ -243,31 +243,25 @@ def calculate_reward(state, next_state, goal, streets, crowds, shortest_path):
     if dist_next < dist_current:
         reward += 1
 
-    # Penalty based on crowd or length
-    if shortest_path:
-        edge_len = streets.at[next_state, "length"]
-        reward -= edge_len/50
-    else:
-        crowd = estimate_crowd(next_state, crowds)
-        reward -= crowd
+    # Penalty based on crowd
+    crowd = estimate_crowd(next_state, crowds)
+    reward -= crowd
 
     return reward
 
-def choose_action(state, epsilon, Q, goal, streets, crowds, shortest_path):
-    # Get connections
+def choose_action(state, epsilon, Q, goal, streets, crowds):
     next_states = streets.at[state, "connections"]
 
     if not next_states:
         return goal, -1000
     
-    # Ensure state and actions exists in Q-table
     if state not in Q:
         Q[state] = {action: 0.0 for action in next_states}
     for action in next_states:
         if action not in Q[state]:
             Q[state][action] = 0.0
 
-    # Epsilon-Greedy Logic
+    # Epsilon-Greedy
     if random.random() < epsilon:
         next_state = random.choice(next_states)
     else:
@@ -275,14 +269,11 @@ def choose_action(state, epsilon, Q, goal, streets, crowds, shortest_path):
         best = [a for a in next_states if Q[state][a] == max_q]
         next_state = random.choice(best)
 
-    reward = calculate_reward(
-        state, next_state, goal,
-        streets, crowds, shortest_path
-    )
+    reward = calculate_reward(state, next_state, goal, streets, crowds)
 
     return next_state, reward
 
-def train(start, goal, streets, crowds, shortest_path=False, 
+def train(start, goal, streets, crowds,
           parameters=[0.5, 0.9992, 1.0, 1.0, 0.999], 
           episodes=5000, min_delta=0.01, patience=5):
     
@@ -291,18 +282,17 @@ def train(start, goal, streets, crowds, shortest_path=False,
 
     start_name = streets.at[start, "name"]
     goal_name = streets.at[goal, "name"]
-    if not shortest_path:
-        print(f"[Q-Learning] from '{start_name}' to '{goal_name}'")
+    
+    print(f"[Q-Learning] from '{start_name}' to '{goal_name}'")
 
-    stable_episodes = 0  # Counter for convergence check
+    stable_episodes = 0 
 
     for episode in range(episodes):
         path = [start]
         state = start
         steps = 0
-        max_change = 0  # Track max Q-value change this episode
+        max_change = 0 
 
-        # Calculate current decays
         curr_alpha = max(alpha * (a_decay ** episode), 0.01)
         curr_epsilon = max(epsilon * (e_decay ** episode), 0.01)
 
@@ -310,46 +300,37 @@ def train(start, goal, streets, crowds, shortest_path=False,
 
             next_state, reward = choose_action(
                 state, curr_epsilon, Q,
-                goal, streets, crowds, shortest_path
+                goal, streets, crowds
             )
 
-            # Ensure next state exists in Q
             if next_state not in Q:
                 Q[next_state] = {}
 
-            # Q-Learning Formula
             max_next_q = max(Q[next_state].values()) if Q[next_state] else 0.0
             current_q = Q[state].get(next_state, 0.0)
 
             new_q = current_q + curr_alpha * (reward + gamma * max_next_q - current_q)
             Q[state][next_state] = new_q
 
-            # Track change for convergence check
             diff = abs(new_q - current_q)
             if diff > max_change:
                 max_change = diff
 
-            # Move agent
             path.append(next_state)
             state = next_state
             steps += 1
 
-        # Check for convergence
         if max_change < min_delta:
             stable_episodes += 1
         else:
             stable_episodes = 0
 
-        # Stop early if converged
         if stable_episodes >= patience:
-            if not shortest_path:
-                print(f"-> Values converged at episode {episode} (max Δ = {min_delta}, patience = {patience})")
+            print(f"-> Values converged at episode {episode} (max Δ = {min_delta}, patience = {patience})")
             break
 
-        # Log progress periodically
         if episode in [10, 20, 50, 100, 200, 500, 1000, 1500, 2000, 3000, 4000, 5000]:
-            if not shortest_path:
-                print(f"· Episode {episode}: {steps} steps, Δ = {max_change:.4f}")
+            print(f"· Episode {episode}: {steps} steps, Δ = {max_change:.4f}")
 
     return path, Q
 
