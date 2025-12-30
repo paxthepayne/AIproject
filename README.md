@@ -127,8 +127,7 @@ reward -= node_crowd_level            # Crowd penalty
 
 ### Results and Comparisons
 
-The optimal path gets compared to the shortest possible path found (calculated using an A* algorithm);
-The compared metrics are path length and average crowd exposure.
+The optimal path gets compared to the shortest possible path found (calculated using an A* algorithm); The compared metrics are path length and average crowd exposure.
 ---
 
 ## 🚀 Installation
