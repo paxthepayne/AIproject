@@ -1,5 +1,4 @@
-[README.md](https://github.com/user-attachments/files/24375154/README.md)
-# 🚶 Smart Crowd Router
+# Smart Crowd Router
 
 **Intelligent pedestrian navigation for Barcelona using Reinforcement Learning**
 
@@ -7,18 +6,18 @@
 
 ---
 
-## 📋 Overview
+## Overview
 
 Smart Crowd Router is a pedestrian navigation system that computes optimal routes through Barcelona, accounting for **real-time crowd density**. Unlike traditional routing systems that only minimize distance, this project uses a **Q-Learning agent** to balance two objectives:
 
 1. **Minimize distance** to the destination
-2. **Avoid crowded areas** based on historical foot-traffic data
+2. **Avoid crowded areas** based on historical data and current conditions
 
 The system always compares the suggested route with the shortest path, allowing users to evaluate the trade-off between distance and comfort.
 
 ---
 
-## 🏗️ System Architecture
+## System Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
