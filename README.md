@@ -166,7 +166,7 @@ Sagrada Família -> Avinguda de Gaudí -> Travessera de Gràcia -> ...
 
 ## Contribución del Proyecto
 Persona  |  Área Principal  | % 
----------|--------|----
+---------|------------------|----
 Filippo  | Algoritmos de pathfinding (Q-learning, función de recompensa, lógica de entrenamiento, A*) | 25% 
 Jacopo   | Diseño y construcción del mapa (OpenData BCN, OSM, Google PopularTimes, lógica de agregación) | 30% 
 Liseth   | Integración del sistema e interacción (main.py, smart navigation, integración del meteo, UX) | 25% 
