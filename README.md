@@ -127,39 +127,18 @@ reward -= node_crowd_level            # Crowd penalty
 
 ### Results and Comparisons
 
-The optimal path gets compared to the shortest possible path found (calculated using an A* algorithm); The compared metrics are path length and average crowd exposure.
+The optimal path gets compared to the shortest possible path found (calculated using an A* algorithm); 
+The user can see metrics (path length, average crowd exposure) and a quick overview of the steps to the goal for both options.
+
+### Smart Navigation Mode
+
+Smart Navigation Mode allows users to interact directly with the learned Q-learning policy. At every step, the system suggests route options ranked from best to worst, while still giving the user full freedom to override the recommendation and explore alternative paths.
 
 ---
 
-## 🚀 Installation
+## Usage
 
-### Prerequisites
-
-- Python 3.8+
-- Google Maps API Key (for PopularTimes and Weather)
-
-### Dependencies
-
-```bash
-pip install pandas geopandas numpy matplotlib requests
-pip install osmnx googlemaps populartimes
-```
-
-### Setup
-
-1. Clone the repository
-2. Add your Google API Key to `map_builder.py` and `tools.py`
-3. If `map.json.gz` doesn't exist, run `map_builder.py` first
-
----
-
-## 💻 Usage
-
-```bash
-python main.py
-```
-
-**Expected Output:**
+**Example of an Output:**
 ```
 [AI Project - Smart Crowd Router] By Filippo Pacini, Jacopo Crispolti, Liseth Berdeja, Sieun You
 
@@ -169,7 +148,7 @@ Fetching weather info...
 Enter your location: Sagrada Familia
 > Best match: Basílica de la Sagrada Família [Place]
 
-Enter destination (<2km distance): Parc Guell
+Enter destination (<3km distance): Parc Guell
 > Best match: Park Güell [Place]
 
 [Q-Learning] from 'Basílica de la Sagrada Família' to 'Park Güell'
@@ -183,42 +162,3 @@ Sagrada Família -> Carrer de Provença -> Carrer de Sardenya -> ...
 [Shortest path] 1890 meters | 28.73 average crowd exposure
 Sagrada Família -> Avinguda de Gaudí -> Travessera de Gràcia -> ...
 ```
-
----
-
-## 📊 Output
-
-The system provides two routes:
-
-| Metric | Suggested Path | Shortest Path |
-|--------|----------------|---------------|
-| **Optimizes** | Low crowd exposure | Minimum distance |
-| **Distance** | Potentially longer | Minimum |
-| **Crowd exposure** | Minimized | Not considered |
-
-Users can choose based on their priorities: getting there quickly or walking in peace.
-
----
-
-## 🔮 Future Extensions
-
-- [ ] Web-based GUI with interactive map
-- [ ] Real-time traffic data integration
-- [ ] Support for other cities
-- [ ] Mobile app with turn-by-turn navigation
-- [ ] Special events consideration (concerts, matches, demonstrations)
-- [ ] User preferences (avoid stairs, prefer green areas, etc.)
-
----
-
-## 📄 License
-
-Academic project - All rights reserved by the authors.
-
----
-
-## 🙏 Acknowledgments
-
-- [OpenData BCN](https://opendata-ajuntament.barcelona.cat/) for point-of-interest data
-- [OpenStreetMap](https://www.openstreetmap.org/) for the street network
-- [Google Maps Platform](https://developers.google.com/maps) for crowd and weather data
