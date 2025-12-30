@@ -94,9 +94,9 @@ crowd = popular_times[day][hour] × weather_modifier
 
 | Weather | Modifier |
 |---------|----------|
-| Sunny | ×1.3 |
-| Cloudy | ×0.9 |
-| Rainy | ×0.3 |
+| Sunny   | ×1.3     |
+| Cloudy  | ×0.9     |
+| Rainy   | ×0.3     |
 
 ### Algoritmo Q-Learning
 
@@ -104,10 +104,10 @@ El agente aprende el camino óptimo a través de prueba y error:
 
 **Componentes de Aprendizaje por Refuerzo:**
 
-| Elemento | Descripción |
-|----------|-------------|
-| **Estado** | Nodo actual en el gráfico (calle o POI) |
-| **Acción** | Moverse a un nodo conectado |
+| Elemento       | Descripción |
+|----------------|-------------|
+| **Estado**     | Nodo actual en el gráfico (calle o POI) |
+| **Acción**     | Moverse a un nodo conectado |
 | **Recompensa** | Función que equilibra distancia y exposición a la multitud |
 
 **Función de Recompensa:**
