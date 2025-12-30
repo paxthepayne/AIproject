@@ -56,13 +56,13 @@ The system always compares the suggested route with the shortest path, allowing 
 
 ## How It Works
 
-### 1. Map Construction (One-time Setup)
+### Map Construction (One-time Setup)
 
 `map_builder.py` creates the city graph:
 
-1. **Downloads POIs** from OpenData BCN (~32,000 points of interest)
-2. **Enriches with Google PopularTimes**: for each POI, fetches hourly foot-traffic data (7×24 matrix)
-3. **Builds the street network** from OpenStreetMap using OSMnx
+1. **Downloads POIs** from OpenData BCN (~900 points of interest)
+2. **Enriches with Google PopularTimes**: for each POI, finds historical hourly crowd data 
+3. **Builds the street network** from OpenStreetMap using OSMnx python library
 4. **Links POIs to streets**: each point of interest is associated with the nearest street segment
 5. **Aggregates data**: POI crowd levels are propagated to their host streets
 6. **Exports** the graph as a compressed JSON file
@@ -71,22 +71,22 @@ The system always compares the suggested route with the shortest path, allowing 
 ```json
 {
   "id": 12345,
-  "type": 0,           // 0 = street, 1 = POI
+  "type": 0, // 0 = street, 1 = place
   "name": "Carrer de Balmes",
   "coords": [41.3951, 2.1534],
-  "len": 125.4,        // length in meters
-  "conns": [12344, 12346, 50023],  // connected nodes
-  "popular_times": [[...], [...], ...]  // 7x24 matrix (or null)
+  "len": 125.4, // length in meters
+  "conns": [12344, 12346, 50023], // connected nodes
+  "popular_times": [[...], [...], ...]  // 7x24 matrix
 }
 ```
 
-### 2. Real-time Crowd Estimation
+### Real-time Crowd Adjustments
 
 At startup, `main.py`:
 
-1. Fetches **current weather conditions** from Google Weather API
-2. Determines **current day and hour**
-3. Computes each street's crowd level using:
+- Fetches **current weather conditions** from Open-Meteo API (Simplified to Sunny/Cloudy/Rainy)
+- Determines **current day and hour**
+- Computes each street's crowd level using:
 
 ```
 crowd = popular_times[day][hour] × weather_modifier
@@ -94,11 +94,11 @@ crowd = popular_times[day][hour] × weather_modifier
 
 | Weather | Modifier |
 |---------|----------|
-| ☀️ Sunny | ×1.3 |
-| ☁️ Cloudy | ×0.9 |
-| 🌧️ Rainy | ×0.3 |
+| Sunny | ×1.3 |
+| Cloudy | ×0.9 |
+| Rainy | ×0.3 |
 
-### 3. Q-Learning Algorithm
+### Q-Learning Algorithm
 
 The agent learns the optimal path through trial-and-error:
 
@@ -115,17 +115,20 @@ The agent learns the optimal path through trial-and-error:
 reward = -1                           # Base penalty per step
 reward += 10000 if goal_reached       # Arrival bonus
 reward += 1 if getting_closer         # Direction bonus
-reward -= node_crowd_level            # Crowd penalty (suggested path)
-reward -= length/50                   # Distance penalty (shortest path)
+reward -= node_crowd_level            # Crowd penalty
 ```
 
 **Hyperparameters:**
-- Learning rate (α): 0.5 with 0.999 decay
+- Learning rate (α): 0.5 with 0.9992 decay
 - Discount factor (γ): 1.0
-- Initial epsilon: 1.0 with 0.997 decay
+- Exploration rate (ε): 1.0 with 0.999 decay
 - Max episodes: 5000
 - Early stopping: convergence if ΔQ < 0.01 for 5 consecutive episodes
 
+### Results and Comparisons
+
+The optimal path gets compared to the shortest possible path found (calculated using an A* algorithm);
+The compared metrics are path length and average crowd exposure.
 ---
 
 ## 🚀 Installation
