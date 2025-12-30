@@ -172,4 +172,4 @@ Person   |	Area   | %
 Filippo  | Routing algorithms (Q-learning design, reward function, training logic, A*, tuning) | 30%
 Jacopo   | Map design & construction (OpenData BCN, OSM, Google PopularTimes, aggregation logic) | 25%
 Liseth   | System integration & interaction (main.py, navigation mode, weather integration, UX) |	25%
-Sieun    | Data research & project cohesion (OpenData BCN dataset, code refactoring, documentation) | 20%
+Sieun    | Data research & project cohesion (OpenData BCN datasets, weather APIs, code refactoring, documentation) | 20%
