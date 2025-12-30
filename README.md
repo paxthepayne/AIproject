@@ -167,9 +167,9 @@ Sagrada Família -> Avinguda de Gaudí -> Travessera de Gràcia -> ...
 
 ## Project Contribution
 
-Area |	Person | %
+Person |	Area | %
 -----|---------|----
-Map construction & data integration (OpenData BCN, OSM, Google PopularTimes, aggregation logic)	| Person A |	30%
-Routing algorithms (Q-learning design, reward function, training logic, A*, tuning) |	Person B | 30%
-System integration & interaction (main.py, navigation mode, UX, weather integration, evaluation metrics) |	Person C |	20%
-Documentation & presentation (PDF writing, diagrams, results analysis, conclusions, slides) |	Person D | 20%
+Person A | Map construction & data integration (OpenData BCN, OSM, Google PopularTimes, aggregation logic)	| 	30%
+	Person B | Routing algorithms (Q-learning design, reward function, training logic, A*, tuning) | 30%
+Person C | System integration & interaction (main.py, navigation mode, UX, weather integration, evaluation metrics) |		20%
+Person D | Documentation & presentation (PDF writing, diagrams, results analysis, conclusions, slides) |	 20%
