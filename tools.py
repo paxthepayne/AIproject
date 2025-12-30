@@ -96,8 +96,8 @@ def distance(start_coordinates, end_coordinates, type="manhattan"):
 
 def find_place(streets_df, start_id=None):
     """
-    Interactive place search using vectorization and fuzzy matching.
-    If 'start_id' is provided, restricts search to a 3km radius (local destination).
+    Interactive place autocomplete using vectorization and fuzzy matching.
+    If 'start_id' is provided, restricts destination search to a 3km walking distance.
     """
     # Pre-process names if not already done
     if 'name_clean' not in streets_df.columns:
@@ -105,30 +105,25 @@ def find_place(streets_df, start_id=None):
 
     search_df = streets_df
 
-    # 1. Radius Filter (if start_id provided)
+    # Radius Filter (if start_id provided)
     if start_id is not None:
-        try:
-            start_coords = streets_df.at[start_id, 'coordinates']
-            lat, lon = start_coords
-            
-            # Rough bounding box filter (faster than distance calc)
-            mask = (
-                streets_df['coordinates'].str[0].between(lat - 0.025, lat + 0.025) &
-                streets_df['coordinates'].str[1].between(lon - 0.035, lon + 0.035)
-            )
-            search_df = streets_df[mask].copy()
+        start_coords = streets_df.at[start_id, 'coordinates']
+        lat, lon = start_coords
+        
+        # Rough bounding box filter (faster than distance calc)
+        mask = (
+            streets_df['coordinates'].str[0].between(lat - 0.025, lat + 0.025) &
+            streets_df['coordinates'].str[1].between(lon - 0.035, lon + 0.035)
+        )
+        search_df = streets_df[mask].copy()
 
-            # Precise distance filter
-            search_df['dist_temp'] = search_df['coordinates'].apply(
-                lambda x: distance(start_coords, x, type="euclidean")
-            )
-            search_df = search_df[search_df['dist_temp'] <= 2000]
-            
-        except KeyError:
-            print("Start ID invalid, switching to global search.")
-            search_df = streets_df 
+        # Precise distance filter
+        search_df['dist_temp'] = search_df['coordinates'].apply(
+            lambda x: distance(start_coords, x)
+        )
+        search_df = search_df[search_df['dist_temp'] <= 3000]
 
-    # 2. Interactive Loop
+    # Interactive Loop
     while True:
         prompt = f"Enter {'destination (<3km)' if start_id else 'location'}"
         user_input = input(f"{prompt}: ").strip()
@@ -142,7 +137,7 @@ def find_place(streets_df, start_id=None):
         candidates = search_df[mask].copy()
         candidates['score'] = 100 
         
-        # Fuzzy Fallback if few results
+        # Fuzzy Match Fallback if few results
         if len(candidates) < 5:
             choices = search_df[~mask]['name_clean'].to_dict()
             
@@ -175,6 +170,7 @@ def find_place(streets_df, start_id=None):
             
         candidates = candidates.sort_values(by=sort_cols, ascending=ascending).head(1)
         
+        # Display Best Match
         best_match = candidates.iloc[0]
         ntype = "Place" if best_match['type'] == 1 else "Street"
         print(f"> Best match: {best_match['name']} [{ntype}]\n")
@@ -264,7 +260,7 @@ def a_star(start, goal, streets):
 # --- Q-LEARNING AGENT (Crowd Optimized) ---
 
 def estimate_crowd(street_id, crowds):
-    """Helper to safely get crowd density for a street."""
+    """Get crowd density for a street."""
     if pd.isna(crowds[street_id]):
         return 0.0
     return crowds[street_id]
@@ -278,7 +274,7 @@ def calculate_reward(state, next_state, goal, streets, crowds):
     - Negative penalty proportional to crowd density.
     """
     if next_state == goal:
-        reward = 10000
+        reward = 1000
     else:
         reward = -1
 
@@ -390,172 +386,85 @@ def train(start, goal, streets, crowds,
 # --- SMART NAVIGATION MODE ---
 
 def navigation_mode(start, goal, streets, crowds, Q):
-    """
-    Interactive turn-by-turn navigation simulation.
-    Aggregates small segments into instructions like "Continue for X meters".
-    """
-    print("\n[Smart Navigation Mode]\n")
-    
-    curr = start
-    goal_coords = streets.at[goal, "coordinates"]
-    
-    visited = {start}
-    path = [start]
-    last_rejects = set()
-    
+    print("\n[Simple Navigation Mode] (input 'q' to quit)\n")
+
+    curr, visited = start, {start}
+    goal_xy = streets.at[goal, "coordinates"]
     walked_dist = 0
-    since_decision_dist = 0
-    
-    STOPWORDS = {
-        "carrer", "de", "del", "d", "la", "el", "els", "les", "los", "las", 
-        "plaça", "placa", "plaza", "passeig", "avinguda", "av", "rambla", 
-        "calle", "gran", "via", "travessera", "sant", "santa", "passatge"
-    }
-
-    def get_tok(n):
-        """Extracts significant tokens from a street name."""
-        name_str = str(n).lower()
-        if "sin nombre" in name_str: 
-            return ({"unnamed"}, "Unnamed Street")
-        
-        # Remove punctuation and split
-        clean_text = re.sub(r'[^\w\s]', '', unidecode(name_str))
-        tokens = [t for t in clean_text.split() if t not in STOPWORDS]
-        display_name = " ".join(t.title() for t in tokens) or n
-        
-        return (set(tokens), display_name)
-
-    cur_toks, cur_disp = get_tok(streets.at[start, "name"])
 
     while curr != goal:
-        cur_node_name = streets.at[curr, "name"]
-        cur_xy = streets.at[curr, "coordinates"]
-        dist_to_goal = distance(cur_xy, goal_coords, type="euclidean")
+        cur_name = str(streets.at[curr, "name"])
         
-        # Clear rejection memory if we've walked far enough
-        if since_decision_dist > 100: 
-            last_rejects.clear() 
+        # Gather all possible moves
+        raw_options = []
+        for n in streets.at[curr, "connections"]:
+            if n in visited: continue
 
-        # 1. Gather & Deduplicate Options (Connections)
-        opts_map = {}
-        connections = [x for x in streets.at[curr, "connections"] if x not in visited]
-        
-        for n in connections:
-            n_name = streets.at[n, "name"]
-            n_xy = streets.at[n, "coordinates"]
-            d_goal = distance(n_xy, goal_coords, type="euclidean")
-            toks, disp = get_tok(n_name)
+            dist_now = distance(streets.at[curr, "coordinates"], goal_xy, type="euclidean")
+            dist_next = distance(streets.at[n, "coordinates"], goal_xy, type="euclidean")
+            diff = dist_next - dist_now
             
-            # Determine progress relative to goal
-            diff = d_goal - dist_to_goal
-            if diff < -5: prog = "closer"
-            elif diff > 5: prog = "further"
-            else: prog = "steady"
+            prog = "closer" if diff < -5 else "further" if diff > 5 else "steady"
+            name = str(streets.at[n, "name"])
             
-            # Check if this is a continuation of current street
-            is_cont = bool(toks & cur_toks)
-            
-            opt = {
+            # Get crowd level (default to 0 if missing)
+            crowd_level = crowds.get(n, 0)
+
+            raw_options.append({
                 "id": n, 
-                "name": n_name, 
-                "display": disp, 
-                "tokens": toks,
-                "is_cont": is_cont, 
-                "q": Q.get(curr, {}).get(n, -float("inf")),
+                "name": name, 
                 "len": streets.at[n, "length"], 
-                "d_goal": d_goal, 
-                "prog": prog, 
-                "diff": diff
-            }
-            
-            # Store unique options by name tokens (keep the one closer to goal)
-            key = frozenset(toks)
-            if key not in opts_map or d_goal < opts_map[key]["d_goal"]: 
-                opts_map[key] = opt
+                "d_goal": dist_next,
+                "prog": prog,
+                "crowd": crowd_level,
+                "is_cont": (name == cur_name), 
+                "q": Q.get(curr, {}).get(n, -float("inf"))
+            })
 
-        raw_options = list(opts_map.values())
-        
         if not raw_options:
-            status = "Dead end." if not streets.at[curr, "connections"] else "Stuck. Backtracking..."
-            print(status)
-            break
-
-        # 2. Filter & Sort Options
-        # Prefer paths that don't move away, unless it's the only way or a continuation
-        final_options = [o for o in raw_options if o["prog"] != "further" or o["is_cont"]]
-        if not final_options:
-            final_options = raw_options
-            
-        # Sort by: Getting closer to goal (diff asc), then Q-value (desc)
-        final_options.sort(key=lambda x: (x["diff"], -x["q"]))
-        best = final_options[0]
-
-        # 3. Auto-walk Logic (Skip interaction if obvious)
-        
-        # If best option looks like a continuation but was previously rejected, switch logic
-        cont_opt = next((o for o in final_options if o["is_cont"]), None)
-        if cont_opt and best["tokens"] != cont_opt["tokens"] and (best["tokens"] & last_rejects): 
-            best = cont_opt
-        
-        # Check if all other options were explicitly rejected recently
-        others_rejected = all(not (o["tokens"] & last_rejects) for o in final_options if o is not best)
-        
-        should_auto_walk = (best["id"] != goal) and (
-            len(final_options) == 1 or 
-            (best["is_cont"] and since_decision_dist < 100) or 
-            (others_rejected and since_decision_dist < 100)
-        )
-
-        if should_auto_walk:
-            # Update display name if we are just starting a segment
-            if walked_dist == 0: 
-                cur_disp, cur_toks = best["display"], best["tokens"]
-                
-            walked_dist += best["len"]
-            since_decision_dist += best["len"]
-            
-            visited.add(best["id"])
-            path.append(best["id"])
-            curr = best["id"]
-            continue
-
-        # 4. Display & Input (Intersection reached)
-        if walked_dist: 
-            print(f"Go straight on {cur_disp} for {int(walked_dist)}m")
-        
-        walked_dist = 0
-        since_decision_dist = 0 
-        
-        if best["id"] == goal: 
-            print(f"Arrived at {best['name']}!")
+            print("Dead end or Stuck.")
             return
 
-        print(f"Intersection at {cur_node_name}")
+        # Keep only the 'best' move for each unique street name
+        best_per_name = {}
+        for o in raw_options:
+            if o["name"] not in best_per_name or o["d_goal"] < best_per_name[o["name"]]["d_goal"]:
+                best_per_name[o["name"]] = o
         
-        for i, o in enumerate(final_options, 1):
-            verb = "continue" if o["is_cont"] else "turn onto"
-            print(f"  {i}. {verb} {o['display']} ({o['prog']}, {int(o['d_goal'])} m to goal, <10 crowd)")
+        options = list(best_per_name.values())
 
+        # Sort by Q-value
+        options.sort(key=lambda o: -o["q"])
+        best = options[0]
+
+        # Auto-walk Logic
+        if len(options) == 1 or (best["is_cont"] and walked_dist < 100):
+            walked_dist += best["len"]
+            visited.add(best["id"])
+            curr = best["id"]
+            if curr == goal: break 
+            continue
+
+        # Display auto walk info
+        if walked_dist > 0:
+            print(f"Go straight on {cur_name} for {int(walked_dist)}m\n")
+            walked_dist = 0
+
+        # Display Options
+        print(f"Intersection at {cur_name}")
+        for i, o in enumerate(options, 1):
+            verb = "continue" if o["is_cont"] else "turn onto"
+            print(f"  {i}. {verb} {o['name']} ({o['prog']}, {int(o['d_goal'])}m to goal, crowd: {o['crowd']})")
+
+        # User Choice
         while True:
-            ch = input("> ").strip().lower()
-            if ch == 'q': 
-                return
-            
-            if ch.isdigit() and 0 <= (idx := int(ch)-1) < len(final_options):
-                sel = final_options[idx]
-                
-                # Update rejection memory
-                if not sel["is_cont"]: 
-                    last_rejects = set()
-                else: 
-                    # If continuing, remember we rejected the turns
-                    last_rejects = {t for o in final_options if o is not sel for t in o["tokens"]}
-                
-                cur_disp, cur_toks = sel["display"], sel["tokens"]
-                visited.add(sel["id"])
-                path.append(sel["id"])
-                curr = sel["id"]
-                since_decision_dist = 0
+            ch = input("> ").strip()
+            if ch == "q": return
+            if ch.isdigit() and 1 <= int(ch) <= len(options):
+                best = options[int(ch) - 1]
+                visited.add(best["id"])
+                curr = best["id"]
                 break
-            
-            print("Invalid selection.")
+            print("Invalid choice.")
+
+    print(f"Arrived at {str(streets.at[goal, 'name'])}!")
