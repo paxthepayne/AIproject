@@ -162,3 +162,14 @@ Sagrada Família -> Carrer de Provença -> Carrer de Sardenya -> ...
 [Shortest path] 1890 meters | 28.73 average crowd exposure
 Sagrada Família -> Avinguda de Gaudí -> Travessera de Gràcia -> ...
 ```
+
+---
+
+## Project Contribution
+
+Area |	Person | %
+-----|---------|----
+Map construction & data integration (OpenData BCN, OSM, Google PopularTimes, aggregation logic)	| Person A |	30%
+Routing algorithms (Q-learning design, reward function, training logic, A*, tuning) |	Person B | 30%
+System integration & interaction (main.py, navigation mode, UX, weather integration, evaluation metrics) |	Person C |	20%
+Documentation & presentation (PDF writing, diagrams, results analysis, conclusions, slides) |	Person D | 20%
